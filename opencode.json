@@ -1,0 +1,129 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "instructions": ["./AGENTS.md"],
+    "plugin": ["~/.config/opencode/plugins/engram.ts"],
+    "lsp": {
+        "sol-lsp": {
+            "command": ["nomicfoundation-solidity-language-server", "--stdio"],
+            "extensions": [".sol"]
+        }
+    },
+    "provider": {
+        "openrouter": {
+            "models": {
+                "moonshotai/kimi-k2.5": {
+                    "options": {
+                        "provider": {
+                            "only": ["moonshotai"]
+                        }
+                    }
+                },
+                "qwen/qwen3-coder": {
+                    "options": {
+                        "provider": {
+                            "only": ["chutes/fp8"]
+                        }
+                    }
+                },
+                "minimax/minimax-m2.1": {
+                    "options": {
+                        "temperature": 0.5,
+                        "provider": {
+                            "only": ["atlas-cloud/fp8"]
+                        }
+                    }
+                },
+                "z-ai/glm-4.7": {
+                    "options": {
+                        "temperature": 0.35,
+                        "provider": {
+                            "only": ["parasail/fp8"]
+                        }
+                    }
+                },
+                "x-ai/grok-4.1-fast": {
+                    "options": {
+                        "temperature": 0.45,
+                        "reasoning": {
+                            "effort": "high"
+                        }
+                    }
+                },
+                "google/gemini-3-flash-preview": {
+                    "options": {
+                        "temperature": 0.5,
+                        "reasoning": {
+                            "effort": "medium"
+                        }
+                    }
+                }
+            }
+        },
+        "anthropic": {
+            "models": {
+                "claude-sonnet-4-5": {
+                    "options": {
+                        "temperature": 0.35,
+                        "textVerbosity": "low",
+                        "reasoningEffort": "high"
+                    }
+                }
+            }
+        }
+    },
+    "agent": {
+        "build": {
+            "temperature": 0.35,
+            "prompt": "You are a routing agent. Your primary job is to delegate tasks to the correct subagent using the task tool. Do not do the work yourself.\n\nRouting rules:\n- Bug fixes, refactoring, spec implementations, config/dependency changes → delegate to deterministic-coder\n- Architecture design, trade-off analysis, ambiguous or underspecified problems → delegate to exploratory-architect\n- Investigating unfamiliar topics, verifying claims, synthesizing docs or sources → delegate to expert-researcher\n\nFor every user request: identify which subagent applies, call the task tool with that agent and the full task description. Only answer directly if the request is a trivial one-line question that needs no tools.",
+            "permission": {
+                "task": {
+                    "*": "allow"
+                }
+            }
+        },
+        "deterministic-coder": {
+            "description": "Bug fixes, spec implementations, refactoring, and routine development. Use when the correct solution is well-defined and consistency matters more than exploration.",
+            "mode": "subagent",
+            "temperature": 0.15,
+            "steps": 30,
+            "color": "#4a90d9",
+            "permission": {
+                "edit": "allow",
+                "bash": "ask",
+                "webfetch": "deny"
+            }
+        },
+        "exploratory-architect": {
+            "description": "Architecture design, algorithm optimization, and complex problem-solving. Use when multiple valid solutions exist, trade-offs need evaluation, or requirements are ambiguous.",
+            "mode": "subagent",
+            "temperature": 1,
+            "steps": 15,
+            "color": "#9b59b6",
+            "thinking": {
+                "type": "enabled",
+                "budgetTokens": 8000
+            },
+            "permission": {
+                "edit": "deny",
+                "bash": "deny",
+                "webfetch": "allow"
+            }
+        },
+        "expert-researcher": {
+            "description": "Evidence gathering, source evaluation, and synthesis. Use when investigating unfamiliar topics, verifying claims, comparing solutions, or when confidence in an answer is below high.",
+            "mode": "subagent",
+            "temperature": 1,
+            "steps": 20,
+            "color": "#27ae60",
+            "thinking": {
+                "type": "enabled",
+                "budgetTokens": 5000
+            },
+            "permission": {
+                "edit": "deny",
+                "bash": "deny",
+                "webfetch": "allow"
+            }
+        }
+    }
+}
