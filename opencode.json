@@ -74,7 +74,7 @@
     "agent": {
         "build": {
             "temperature": 0.35,
-            "prompt": "You are a routing agent. Your primary job is to delegate tasks to the correct subagent using the task tool. Do not do the work yourself.\n\nRouting rules:\n- Bug fixes, refactoring, spec implementations, config/dependency changes → delegate to deterministic-coder\n- Architecture design, trade-off analysis, ambiguous or underspecified problems → delegate to exploratory-architect\n- Investigating unfamiliar topics, verifying claims, synthesizing docs or sources → delegate to expert-researcher\n\nFor every user request: identify which subagent applies, call the task tool with that agent and the full task description. Only answer directly if the request is a trivial one-line question that needs no tools.",
+            "prompt": "You are a routing agent. Your primary job is to delegate tasks to the correct subagent using the task tool. Do not do the work yourself.\n\nRouting rules:\n- Bug fixes, refactoring, spec implementations, config/dependency changes → delegate to deterministic-coder\n- Architecture design, trade-off analysis, ambiguous or underspecified problems → delegate to exploratory-architect\n- Investigating unfamiliar topics, verifying claims, synthesizing docs or sources → delegate to expert-researcher\n\nParallel dispatch rules:\nWhen given a list of independent todos, group them before dispatching.\n\nGrouping methodology:\n1. File ownership first: tasks that touch the same file or module must be in the same batch — concurrent edits to the same file cause conflicts.\n2. Logical cohesion second: tasks in the same subsystem (e.g. all worker tasks, all context-route tasks) should batch together even if file overlap is uncertain — they share context and the coder will produce more consistent output.\n3. Dependency order third: if task B consumes output produced by task A (a schema change A defines that B references, a function A adds that B calls), sequence those batches — A's batch must complete before B's batch dispatches.\n4. Verification tasks last: linting, type-checking, and test runs must always be a final sequential batch after all implementation batches complete.\n5. Batch size: 2–3 tasks per batch. Prefer 2 when tasks are in adjacent files with uncertain overlap.\n\nDispatch process:\n1. Read the todo list.\n2. Identify subsystems and file ownership for each task.\n3. Form batches per the rules above. State the batches and their rationale before dispatching.\n4. Dispatch each independent batch in parallel via simultaneous task tool calls.\n5. After each parallel wave completes, evaluate results before dispatching the next wave.\n6. Dispatch verification tasks last, sequentially.\n\nFor every user request: identify which subagent applies, call the task tool with that agent and the full task description. Only answer directly if the request is a trivial one-line question that needs no tools.",
             "permission": {
                 "task": {
                     "*": "allow"
@@ -96,12 +96,12 @@
         "exploratory-architect": {
             "description": "Architecture design, algorithm optimization, and complex problem-solving. Use when multiple valid solutions exist, trade-offs need evaluation, or requirements are ambiguous.",
             "mode": "subagent",
-            "temperature": 1,
+            "temperature": 0.6,
             "steps": 15,
             "color": "#9b59b6",
             "thinking": {
                 "type": "enabled",
-                "budgetTokens": 8000
+                "budgetTokens": 10000
             },
             "permission": {
                 "edit": "deny",
@@ -112,7 +112,7 @@
         "expert-researcher": {
             "description": "Evidence gathering, source evaluation, and synthesis. Use when investigating unfamiliar topics, verifying claims, comparing solutions, or when confidence in an answer is below high.",
             "mode": "subagent",
-            "temperature": 1,
+            "temperature": 0.35,
             "steps": 20,
             "color": "#27ae60",
             "thinking": {
@@ -124,6 +124,13 @@
                 "bash": "deny",
                 "webfetch": "allow"
             }
+        }
+    },
+    "command": {
+        "dispatch-todos": {
+            "description": "Group and dispatch all open todos to deterministic-coder in parallel batches",
+            "template": "Read the current todo list. Apply the grouping methodology: cluster by shared file ownership first, logical subsystem second, respect dependency order, put verification tasks last. State the proposed batches and rationale before dispatching. Then dispatch each independent batch in parallel using simultaneous task tool calls. Evaluate results after each wave before proceeding to the next.",
+            "agent": "build"
         }
     }
 }

@@ -269,7 +269,7 @@ function reconcileProjectSlug(
 type NodeKind =
     | "constraint" // always/never rule — architectural or code-level
     | "decision" // choice made, rationale recorded
-    | "interface" // internal API/schema boundary you own and enforce
+    | "interface" // internal API, key file, or data structure referenced by multiple nodes
     | "reference" // external fact: library API, spec, third-party behavior
     | "procedure" // how-to steps
     | "finding" // result of investigation or completed work
@@ -287,6 +287,7 @@ type EdgeType =
     | "constrains" // B limits what A can do
     | "validates" // A is evidence that B is true or false
     | "causes" // A's existence made B necessary
+    | "touches" // A modifies or is about file/struct/symbol B
     | "contradicts" // A and B are in conflict
     | "informs"; // A is context that shaped B (directional)
 
@@ -312,6 +313,7 @@ const DEPTH_LIMITS: Record<EdgeType, number> = {
     implements: 2,
     validates: 2,
     causes: 2,
+    touches: 2,
     supersedes: 1, // just the immediate replacement
     contradicts: 1,
     informs: 1,
@@ -324,6 +326,7 @@ const PROPAGATION: Record<EdgeType, { fwd: number; bwd: number }> = {
     implements: { fwd: 0.3, bwd: 0.2 },
     validates: { fwd: 0.3, bwd: 0.25 },
     causes: { fwd: 0.2, bwd: 0.15 },
+    touches: { fwd: 0.4, bwd: 0.4 }, // symmetric — file ownership is bidirectional
     supersedes: { fwd: 0.15, bwd: 0.1 },
     contradicts: { fwd: 0.25, bwd: 0.25 }, // conflicts matter symmetrically
     informs: { fwd: 0.1, bwd: 0.05 },
@@ -358,12 +361,14 @@ const VALID_EDGES: EdgeType[] = [
     "constrains",
     "validates",
     "causes",
+    "touches",
     "contradicts",
     "informs",
 ];
 
 const DESC_KINDS =
-    "constraint (always/never rule) | decision (choice made) | interface (internal API/schema you own) | " +
+    "constraint (always/never rule) | decision (choice made) | " +
+    "interface (internal API, key file, or data structure referenced by multiple nodes) | " +
     "reference (external fact) | procedure (how-to steps) | finding (investigation result) | " +
     "plan (future work) | risk (unverified concern)";
 const DESC_STATUSES =
@@ -373,8 +378,9 @@ const DESC_AUTHORITIES =
 const DESC_CERTAINTIES =
     "confirmed (verified) | working (assumed true) | speculative (uncertain)";
 const DESC_EDGES =
-    "requires (A needs B) | implements (A realizes interface B) | supersedes (A replaces B) | " +
+    "requires (A needs B, or B must complete before A) | implements (A realizes interface B) | supersedes (A replaces B) | " +
     "constrains (B limits A) | validates (A is evidence for/against B) | causes (A made B necessary) | " +
+    "touches (A modifies or is about file/struct/symbol B — use with interface nodes) | " +
     "contradicts (A and B conflict) | informs (A is context that shaped B)";
 
 const MANIFEST_LEGEND =
@@ -414,6 +420,23 @@ During work, write to context when:
 - An assumption in the manifest turns out to be wrong → update_context (correct content/certainty)
 - A risk or plan node in the manifest reaches a conclusion → resolve_context
 - You establish a rule that must hold across the codebase → save_context (constraint)
+- You complete ONE sub-task of a multi-part implementation → save_context (finding) immediately
+
+Node granularity — one node = one atomic concept:
+- Multi-part work (e.g. 5 separate refactors): one finding per sub-task, edges between them.
+  Do NOT accumulate all work into one blob finding — it destroys graph navigability.
+- Finding content MUST include: Files Modified, Symbols Affected, Motivation, Ordering Constraints.
+- When 2+ nodes touch the same file or struct: create an interface node for that artifact,
+  then link_context(from_id=<finding>, to_id=<artifact-node>, edge_type="touches") from each.
+
+DESIGN EDGES BEFORE WRITING CONTENT — for each new node, identify related existing nodes
+and the correct edge type first, then write content. A node with no edges has zero value.
+
+Edge quick-reference:
+  requires  → B must complete before A, or A logically needs B
+  causes    → A motivated B being built or discovered
+  touches   → A modifies or is about file/struct/symbol B (use with interface nodes)
+  validates → A is evidence (benchmark, test, investigation) that confirms or refutes B
 
 Do not write for: steps you are about to take, routine tool calls, speculative ideas not yet tested, or anything already captured in the manifest.
 
@@ -1906,10 +1929,10 @@ Each node:
 Kinds:
   constraint  — always/never rules (architectural or code-level)
   decision    — choices made with rationale recorded
-  interface   — internal API or schema boundary you own and enforce
+  interface   — internal APIs, key files, or data structures referenced by multiple nodes
   reference   — external facts: library APIs, specs, third-party behavior
   procedure   — how-to steps
-  finding     — results of investigation or completed work
+  finding     — result of investigation or a single completed implementation sub-task
   plan        — intended future work not yet done
   risk        — unverified concern or assumption
 
@@ -1923,31 +1946,104 @@ Importance (1–5):
   2 = supplementary detail or reference
   1 = ephemeral or low-stakes note
 
+─── NODE GRANULARITY ────────────────────────────────────────────────────────────────────
+One node = one atomic concept answerable by one question.
+
+BEFORE writing any node, apply this test:
+  "What single question does this node answer?"
+  If it answers two independent questions → split into two nodes with an edge between them.
+
+WRONG: one mega-finding for "all 9 refactors R1–R9 implemented" (answers 9 independent questions)
+CORRECT: up to 9 finding nodes, one per refactor, linked by requires/causes/touches edges
+
+WRONG: architecture + benchmarks + remaining work + optimization log in one node
+CORRECT: one node per concern, edges encoding how they relate
+
+Only merge when items are genuinely inseparable (a one-liner bug fix with no independent navigational value).
+
+─── CONTENT TEMPLATES ───────────────────────────────────────────────────────────────────
+Finding nodes MUST follow this template (omit sections that are N/A):
+  ## Summary
+  <one paragraph — what was done and what it achieves>
+
+  ## Files Modified
+  <comma-separated list, e.g. "server.c, server.h, http.c" — required even if just one file>
+
+  ## Symbols Affected
+  <comma-separated data types, functions, or fields changed, e.g. "write_req_t, on_write_done, conn_t">
+
+  ## Motivation
+  <why this was done — one sentence>
+
+  ## Ordering Constraints
+  <what must exist before this, and what this enables — one sentence each, or "none">
+
+Decision nodes MUST follow this template:
+  ## Decision
+  <the choice made>
+
+  ## Alternatives Considered
+  <what else was evaluated>
+
+  ## Rationale
+  <why this choice>
+
+  ## Consequences
+  <what this forecloses or requires going forward>
+
+─── EDGE DESIGN — REQUIRED BEFORE WRITING CONTENT ──────────────────────────────────────
+For EACH node you will create, do this mental step first:
+  1. List every existing node (from the list above) and every co-created node it relates to.
+  2. For each, choose the single most precise edge type.
+  3. Write one rationale sentence per edge explaining why it holds.
+  4. Only then write the node content.
+
+A node with NO edges has zero navigational value and is actively harmful to graph retrieval.
+Every node MUST have at least one edge. If a node is truly unrelated to everything, do not extract it.
+
 Each edge:
   { "from_id": "<id>", "to_id": "<id>", "edge_type": "<type>",
-    "strength": 0.0-1.0, "rationale": "<one sentence why>" }
+    "strength": 0.0-1.0, "rationale": "<one sentence — required for every edge>" }
 
 Edge types:
-  requires    — A needs B to function correctly
+  requires    — A needs B to function correctly, or B must be completed before A (ordering + logical dependency)
   implements  — A is a concrete realization of interface B
   supersedes  — A replaces B (B should be archived)
-  constrains  — B limits what A can do
-  validates   — A is evidence that B is true or false
-  causes      — A's existence made B necessary
+  constrains  — B limits what A can do; or A and B share a modified structure that shapes both
+  validates   — A is evidence that B is true or false (benchmarks, tests, investigations)
+  causes      — A's existence made B necessary (A motivated B being built or discovered)
+  touches     — A modifies or is specifically about file/struct/symbol/function B
+                (use with interface nodes representing key files or data structures)
   contradicts — A and B are in conflict
-  informs     — A is context that shaped the creation of B
+  informs     — A is background context that shaped B (weakest — use only when no stronger type fits)
 
-Edge strength: 1.0=certain relationship  0.5=probable  0.3=plausible
-Rationale: a single sentence explaining why the relationship exists.
+Software-specific edge selection:
+  • Ordering: B depends on A's output → requires (from B to A: "B requires A")
+  • Motivation: A's existence led to building B → causes (from A to B: "A causes B")
+  • Shared artifact: A and B both modify the same struct/file → touches from both to an interface node for it
+  • Benchmark or investigation explains or confirms a decision → validates
+  • One refactor making another refactor's gains visible → causes
 
-Rules:
-- Extract BOTH nodes AND edges. Edges are as important as nodes. A bag of isolated nodes is nearly useless.
+Edge strength: 1.0=certain  0.5=probable  0.3=plausible
+Rationale: required for every edge. Bad: "related". Good: "R2's removal of uv_timer_t changed conn_t layout that R3's pool design depends on."
+
+─── INTERFACE NODES FOR KEY ARTIFACTS ───────────────────────────────────────────────────
+When 2 or more nodes touch the same file or data structure, create an interface node for it:
+  { "id": "conn-t-struct", "kind": "interface", "scope": "project",
+    "description": "conn_t — per-connection state struct in server.c",
+    "content": "Key struct for per-connection state in server.c. Fields: ...", ... }
+
+Then add touches edges from all related findings/decisions to that interface node.
+This enables graph-traversal answers to "what touches conn_t?" without reading every node body.
+
+─── RULES ───────────────────────────────────────────────────────────────────────────────
+- Extract BOTH nodes AND edges. A graph with isolated nodes is actively harmful to retrieval.
+- EVERY node MUST have at least one edge. No orphans.
 - Only extract edges clearly evident from the conversation — do not invent relationships.
-- IMPORTANT: Also emit edges between NEW nodes and EXISTING nodes (listed above) when the relationship is clear.
-  For example: if a new "auth-token-ttl" constraint directly requires an existing "jwt-config" reference,
-  add an edge {"from_id":"auth-token-ttl","to_id":"jwt-config","edge_type":"requires",...}.
-- Node id must be a lowercase-hyphenated slug, max 40 chars, starting with a letter or digit.
-- Merge related items into one node rather than splitting into many.
+- Also emit edges between NEW nodes and EXISTING nodes when the relationship is clear.
+  For example: if a new "r1-gather-write" finding modified "server.c", and there is an existing
+  "server-c" interface node, add: {"from_id":"r1-gather-write","to_id":"server-c","edge_type":"touches",...}
+- Node id: lowercase-hyphenated slug, max 40 chars, starting with a letter or digit.
 - Skip transient debugging, failed attempts, and obvious facts.
 - Ignore tool calls in the transcript — extract knowledge from content, not from actions.
 - Return {"nodes":[],"edges":[]} if nothing is worth saving.
@@ -3142,7 +3238,11 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         .describe("One-line manifest summary, under 80 chars"),
                     content: tool.schema
                         .string()
-                        .describe("Full content in Markdown"),
+                        .describe(
+                            "Full content in Markdown. " +
+                            "For finding nodes: include ## Files Modified, ## Symbols Affected, ## Motivation, ## Ordering Constraints sections. " +
+                            "For decision nodes: include ## Decision, ## Alternatives Considered, ## Rationale, ## Consequences sections."
+                        ),
                     store: tool.schema
                         .string()
                         .optional()
@@ -3215,7 +3315,11 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                     const resolvedNote = inRows.length
                         ? `\nResolves ${inRows.length} dangling edge(s) from: ${inRows.map((e) => e.from_id).join(", ")}`
                         : "";
-                    return `Saved "${id}" [${kind}] in ${key} store.${resolvedNote}`;
+                    const blobHint =
+                        content.length > 1500 && kind === "finding"
+                            ? `\n\nNote: this finding is ${content.length} chars. For multi-part work, consider splitting into separate focused finding nodes and adding edges — large single-finding nodes degrade graph retrieval quality.`
+                            : "";
+                    return `Saved "${id}" [${kind}] in ${key} store.${resolvedNote}${blobHint}`;
                 },
             }),
 
@@ -3434,6 +3538,17 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                             `• If this plan implements a known interface: link_context(from_id="${id}", to_id="<interface-node>", edge_type="implements")`,
                         );
                     }
+                    if (outcome_kind === "finding") {
+                        edgeHints.push(
+                            `• If this finding modifies any files or structs, create interface nodes for those artifacts and add:\n  link_context(from_id="${id}", to_id="<file-or-struct-node>", edge_type="touches", rationale="...")`
+                        );
+                        edgeHints.push(
+                            `• If this finding was motivated by another finding/decision: link_context(from_id="<cause-node>", to_id="${id}", edge_type="causes", rationale="...")`
+                        );
+                        edgeHints.push(
+                            `• If this finding required another to be done first: link_context(from_id="${id}", to_id="<prerequisite>", edge_type="requires", rationale="...")`
+                        );
+                    }
                     const hintBlock =
                         edgeHints.length > 0
                             ? `\n\nTo complete the graph, consider:\n${edgeHints.join("\n")}`
@@ -3449,7 +3564,7 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                     "to_id may not exist yet — dangling edges are allowed and will resolve when the node is created. " +
                     `edge_type: ${DESC_EDGES}. ` +
                     "strength reflects confidence in the relationship (0.0–1.0). " +
-                    "rationale is a single sentence explaining why the relationship exists — include it for any non-obvious edge.",
+                    "rationale is a single sentence explaining why the relationship exists — required for every edge, not optional.",
                 args: {
                     from_id: tool.schema
                         .string()
@@ -3468,7 +3583,7 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         .string()
                         .optional()
                         .describe(
-                            "Why this relationship exists (one sentence)",
+                            "Why this relationship exists — required, one sentence. Bad: 'related'. Good: 'R2 removes uv_timer_t from conn_t, changing the struct layout that R3 pools depend on.'",
                         ),
                     remove: tool.schema
                         .boolean()
@@ -3897,6 +4012,31 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         if (speculativeHighStakes.length)
                             warnings.push(
                                 `Speculative constraint/decision/interface nodes (verify and update certainty): ${speculativeHighStakes.join(", ")}`,
+                            );
+
+                        // Blob detection: large content nodes with few edges are candidates for splitting
+                        const blobs = allItems
+                            .filter((i) => {
+                                const outCount =
+                                    (idx.outByKey.global.get(i.id)?.length ?? 0) +
+                                    (idx.outByKey.project.get(i.id)?.length ?? 0);
+                                const inCount =
+                                    (idx.inByKey.global.get(i.id)?.length ?? 0) +
+                                    (idx.inByKey.project.get(i.id)?.length ?? 0);
+                                return i.content.length > 2000 && outCount + inCount < 3;
+                            })
+                            .map((i) => {
+                                const outCount =
+                                    (idx.outByKey.global.get(i.id)?.length ?? 0) +
+                                    (idx.outByKey.project.get(i.id)?.length ?? 0);
+                                const inCount =
+                                    (idx.inByKey.global.get(i.id)?.length ?? 0) +
+                                    (idx.inByKey.project.get(i.id)?.length ?? 0);
+                                return `${i.id} (${i.content.length}chars, ${outCount + inCount} edges)`;
+                            });
+                        if (blobs.length)
+                            warnings.push(
+                                `Blob nodes — large content with few edges, likely encoding multiple concerns: ${blobs.join(", ")}. Split and link with causes/requires/touches edges.`,
                             );
 
                         if (warnings.length)
