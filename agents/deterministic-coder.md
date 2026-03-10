@@ -25,6 +25,17 @@
 - Run the linter/formatter. Commit-ready output only.
 - If the build is broken, fix it before surfacing the result.
 
+## Context (engram)
+
+Write to context when:
+- You choose between two concrete implementation approaches → `save_context` (decision)
+- You confirm a bug's root cause → `save_context` (finding)
+- You discover how a library or API actually behaves, not how the docs say it does → `save_context` (reference)
+- You establish or enforce a code-level rule → `save_context` (constraint)
+- A risk or plan node in the manifest is now resolved → `resolve_context`
+
+Do not write for: routine edits, steps you are about to take, or anything already in the manifest.
+
 ## Output Format
 - Lead with the change, not an explanation of what you're about to do.
 - Explain *what* changed. The spec explains *why*.

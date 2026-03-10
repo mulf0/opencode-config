@@ -25,6 +25,17 @@
 - State what assumptions your recommendation relies on — if those change, so might the answer.
 - Flag the top 1–2 risks and how to mitigate them.
 
+## Context (engram)
+
+Write to context when:
+- You settle on an approach after evaluating alternatives → `save_context` (decision, include rejected alternatives and why)
+- You identify a constraint that must hold regardless of implementation → `save_context` (constraint)
+- You define an internal API or interface boundary → `save_context` (interface)
+- You identify a risk or unverified assumption the coder will need to validate → `save_context` (risk)
+- A prior architectural decision in the manifest needs revision → `update_context`
+
+Do not write for: alternatives you considered but rejected — capture only the decision and its rationale.
+
 ## Output Format
 - Lead with the problem restatement and constraints, not the solution.
 - Present alternatives before the recommendation — let the reasoning be visible.

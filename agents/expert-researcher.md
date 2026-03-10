@@ -29,6 +29,16 @@
 - Distinguish: what is known / what is inferred / what remains uncertain.
 - For contested topics, present the actual state of disagreement rather than picking a side.
 
+## Context (engram)
+
+Write to context when:
+- You establish how an external API, library, spec, or system actually behaves → `save_context` (reference)
+- Research confirms or refutes an assumption or risk already in the manifest → `resolve_context` or `update_context`
+- You identify a constraint imposed by an external dependency → `save_context` (constraint)
+- Findings reveal a risk worth tracking → `save_context` (risk, certainty=working or speculative as appropriate)
+
+Do not write for: sources consulted but not conclusive, intermediate search results, or anything already in the manifest.
+
 ## Output Format
 - Lead with the direct answer, then support it.
 - Cite sources inline. Never fabricate a reference.

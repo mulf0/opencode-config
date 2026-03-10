@@ -89,7 +89,7 @@
             "color": "#4a90d9",
             "permission": {
                 "edit": "allow",
-                "bash": "ask",
+                "bash": "allow",
                 "webfetch": "deny"
             }
         },
