@@ -36,7 +36,13 @@ import { tool } from "@opencode-ai/plugin";
 import { Database } from "bun:sqlite";
 import { join } from "path";
 import { homedir } from "os";
-import { mkdirSync, appendFileSync, existsSync, renameSync } from "fs";
+import {
+    mkdirSync,
+    appendFileSync,
+    existsSync,
+    renameSync,
+    readFileSync,
+} from "fs";
 import { createHash } from "crypto";
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
@@ -45,6 +51,10 @@ const ENGRAM_ROOT = join(homedir(), ".config", "engram");
 const ENGRAM_PROJECTS = join(ENGRAM_ROOT, "projects");
 const GLOBAL_DB_PATH = join(ENGRAM_ROOT, "global.db");
 const ENGRAM_LOG_PATH = join(ENGRAM_ROOT, "engram.log");
+
+// Ensure directories exist before any log call fires — mkdirSync in getGlobalDB()
+// is too late because glog() runs during resolveProjectSlug() at startup.
+mkdirSync(ENGRAM_PROJECTS, { recursive: true });
 
 // ─── Logger ───────────────────────────────────────────────────────────────────
 //
@@ -113,7 +123,6 @@ function glog(level: LogLevel, tag: LogTag, msg: string): void {
 let _globalDB: Database | null = null;
 function getGlobalDB(): Database {
     if (!_globalDB) {
-        mkdirSync(ENGRAM_PROJECTS, { recursive: true });
         glog("info", "DB", `opening global DB: ${GLOBAL_DB_PATH}`);
         _globalDB = openDB(GLOBAL_DB_PATH);
     }
@@ -393,14 +402,18 @@ const MANIFEST_LEGEND =
         "Edges: ~prefix=weak(<0.5)  :g=global  :p=project  [?]=unresolved",
     ].join("\n") + "\n";
 
-const MANIFEST_CHAR_CAP = 3200; // ~800 token ceiling for manifest body
+// Manifest size scales with project size. The only real ceiling is the model's
+// context window — at ~4 chars/token, 100 000 chars ≈ 25 000 tokens, well within
+// 200k-window models. Override with ENGRAM_MANIFEST_CAP env var if needed.
+const MANIFEST_CHAR_CAP = parseInt(process.env.ENGRAM_MANIFEST_CAP ?? "100000", 10);
 const SCORE_INTERVAL = 5; // rescore every N messages
 const RECENT_TERMS_WINDOW = 10; // sliding window size for Jaccard terms
 const RECALL_HALF_LIFE_DAYS = 10; // exponential decay λ = ln(2) / 10 ≈ 0.069
 const QUEUE_POLL_MS = 5_000;
 const QUEUE_MAX_SIZE = 50;
 const EXTRACTION_MSG_LIMIT = 40;
-const EXTRACTION_MIN_MESSAGES = 5; // skip extraction if session has fewer messages than this
+const EXTRACTION_MIN_MESSAGES = 1; // skip extraction only if session has zero messages
+const EXTRACTION_TRANSCRIPT_CHAR_LIMIT = 12000;
 
 const _rawExtractEvery = Number(process.env.ENGRAM_EXTRACT_EVERY ?? 20);
 const MESSAGE_EXTRACT_INTERVAL =
@@ -2043,7 +2056,7 @@ This enables graph-traversal answers to "what touches conn_t?" without reading e
 - Also emit edges between NEW nodes and EXISTING nodes when the relationship is clear.
   For example: if a new "r1-gather-write" finding modified "server.c", and there is an existing
   "server-c" interface node, add: {"from_id":"r1-gather-write","to_id":"server-c","edge_type":"touches",...}
-- Node id: lowercase-hyphenated slug, max 40 chars, starting with a letter or digit.
+- Node id: lowercase-hyphenated slug, max 64 chars, starting with a letter or digit.
 - Skip transient debugging, failed attempts, and obvious facts.
 - Ignore tool calls in the transcript — extract knowledge from content, not from actions.
 - Return {"nodes":[],"edges":[]} if nothing is worth saving.
@@ -2066,7 +2079,10 @@ function openAICompatBody(
 ): object {
     return {
         model,
-        max_tokens: 2048,
+        max_tokens: 8192,
+        temperature: 0.2,
+        seed: 2_147_483_647,
+        response_format: { type: "json_object" },
         messages: [
             { role: "system", content: system },
             { role: "user", content: userMsg },
@@ -2074,87 +2090,38 @@ function openAICompatBody(
     };
 }
 
-function anthropicTarget(key: string): ExtractionTarget {
-    return {
-        url: "https://api.anthropic.com/v1/messages",
-        headers: {
-            "x-api-key": key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        model: "claude-haiku-4-5-20251001",
-        parseText: (b) => b?.content?.[0]?.text?.trim() ?? "",
-        buildBody: (model, system, userMsg) => ({
-            model,
-            max_tokens: 2048,
-            system,
-            messages: [{ role: "user", content: userMsg }],
-        }),
-    };
+function readEngramEnvKey(): string | null {
+    try {
+        const envPath = join(ENGRAM_ROOT, ".env");
+        const content = readFileSync(envPath, "utf-8");
+        const match = content.match(/^OPENROUTER_API_KEY=(.+)$/m);
+        if (match) return match[1].trim();
+    } catch {}
+    return null;
 }
 
 function resolveExtractionTarget(
-    providerID: string,
     log: (msg: string) => void,
 ): ExtractionTarget | null {
-    const pid = providerID.toLowerCase();
-
-    if (pid === "anthropic") {
-        const key = process.env.ANTHROPIC_API_KEY;
-        if (!key) {
-            log("extraction: no ANTHROPIC_API_KEY — falling back to session");
-            return null;
-        }
-        return anthropicTarget(key);
-    }
-
-    if (pid === "openrouter") {
-        const key = process.env.OPENROUTER_API_KEY;
-        if (!key) {
-            log("extraction: no OPENROUTER_API_KEY — falling back to session");
-            return null;
-        }
-        return {
-            url: "https://openrouter.ai/api/v1/chat/completions",
-            headers: {
-                Authorization: `Bearer ${key}`,
-                "content-type": "application/json",
-            },
-            model: "anthropic/claude-haiku-4-5",
-            parseText: (b) => b?.choices?.[0]?.message?.content?.trim() ?? "",
-            buildBody: openAICompatBody,
-        };
-    }
-
-    if (pid === "openai") {
-        const key = process.env.OPENAI_API_KEY;
-        if (!key) {
-            log("extraction: no OPENAI_API_KEY — falling back to session");
-            return null;
-        }
-        return {
-            url: "https://api.openai.com/v1/chat/completions",
-            headers: {
-                Authorization: `Bearer ${key}`,
-                "content-type": "application/json",
-            },
-            model: "gpt-4o-mini",
-            parseText: (b) => b?.choices?.[0]?.message?.content?.trim() ?? "",
-            buildBody: openAICompatBody,
-        };
-    }
-
-    const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    if (anthropicKey) {
+    const key = process.env.OPENROUTER_API_KEY ?? readEngramEnvKey();
+    if (!key) {
         log(
-            `extraction: unknown provider "${providerID}", falling back to Anthropic haiku`,
+            "[WARN] [EXTRACT] OPENROUTER_API_KEY not set — set it in your environment or in ~/.config/engram/.env",
         );
-        return anthropicTarget(anthropicKey);
+        return null;
     }
-    log(
-        `extraction: unknown provider "${providerID}" — will use user's model via opencode session`,
-    );
-    return null;
+    log("[DEBUG] [EXTRACT] resolved OPENROUTER_API_KEY");
+    return {
+        url: "https://openrouter.ai/api/v1/chat/completions",
+        headers: {
+            Authorization: `Bearer ${key}`,
+            "content-type": "application/json",
+            "X-Title": "engram",
+        },
+        model: "google/gemini-2.5-flash-lite",
+        parseText: (b) => b?.choices?.[0]?.message?.content?.trim() ?? "",
+        buildBody: openAICompatBody,
+    };
 }
 
 // ─── Commit helpers ───────────────────────────────────────────────────────────
@@ -2169,6 +2136,15 @@ function commitExtraction(
     log(
         `[EXTRACT] commitExtraction: ${nodes.length} raw node(s), ${edges.length} raw edge(s) from ${label}`,
     );
+
+    // Warn when extraction model produced low edge density (a flat graph is actively harmful)
+    if (nodes.length > 0) {
+        const edgeRatio = edges.length / nodes.length;
+        if (edgeRatio < 0.5)
+            log(
+                `[WARN] [EXTRACT] low edge density from ${label}: ${edges.length} edges / ${nodes.length} nodes (ratio=${edgeRatio.toFixed(2)}) — expected ≥1 edge per node; extraction prompt may need adjustment`,
+            );
+    }
 
     // Group nodes by target store key, logging every rejection
     const byKey = new Map<StoreKey, ExtractionNode[]>();
@@ -2186,7 +2162,7 @@ function commitExtraction(
             rejectedNodes++;
             continue;
         }
-        if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(n.id)) {
+        if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(n.id)) {
             log(`[EXTRACT]   SKIP node: invalid id slug "${n.id}"`);
             rejectedNodes++;
             continue;
@@ -2210,6 +2186,7 @@ function commitExtraction(
     // Commit edges — only if from_id exists (to_id may be dangling)
     const validEdges: ExtractionEdge[] = [];
     let rejectedEdges = 0;
+    let noRationaleCount = 0;
     for (const e of edges) {
         if (!e.from_id || !e.to_id || !e.edge_type) {
             log(
@@ -2232,6 +2209,7 @@ function commitExtraction(
             rejectedEdges++;
             continue;
         }
+        if (!e.rationale) noRationaleCount++;
         validEdges.push({
             ...e,
             strength: Math.max(0, Math.min(1, e.strength ?? 0.8)),
@@ -2240,6 +2218,10 @@ function commitExtraction(
     if (rejectedEdges > 0)
         log(
             `[EXTRACT]   rejected ${rejectedEdges} edge(s) due to validation errors`,
+        );
+    if (noRationaleCount > 0)
+        log(
+            `[WARN] [EXTRACT] ${noRationaleCount} edge(s) from ${label} committed without rationale — rationale required for graph navigability`,
         );
 
     if (validEdges.length) {
@@ -2318,99 +2300,6 @@ async function fetchTranscript(
     return text || null;
 }
 
-// ─── Ephemeral-session extraction (unknown providers) ─────────────────────────
-
-async function extractViaSession(
-    providerID: string,
-    modelID: string,
-    store: EngramStore,
-    client: any,
-    log: (msg: string) => void,
-    transcript: string,
-): Promise<void> {
-    if (!transcript) return;
-
-    const { global: gi, project: pi } = store.activeItems();
-    const existingItems =
-        [...gi, ...pi]
-            .map(
-                (i) =>
-                    `${i.id} [${i.kind}]: ${i.description} | ${i.content.slice(0, 100).replace(/\n/g, " ")}`,
-            )
-            .join("\n") || "none";
-    const userMsg = `Existing nodes (check id, description AND content excerpt for semantic overlap — do not re-extract semantically similar nodes):\n${existingItems}\n\n---\n\n${transcript}`;
-
-    let ephemeralSessionId: string | null = null;
-    let parsed: any;
-    try {
-        log(
-            `[EXTRACT] extractViaSession: creating ephemeral session (provider=${providerID} model=${modelID})`,
-        );
-        const created = await client.session.create({
-            body: { title: "engram-extraction" },
-        });
-        ephemeralSessionId = created?.data?.id ?? created?.id;
-        if (!ephemeralSessionId) throw new Error("no session ID returned");
-        log(
-            `[EXTRACT] extractViaSession: ephemeral session created id=${ephemeralSessionId}`,
-        );
-
-        const result = await client.session.prompt({
-            path: { id: ephemeralSessionId },
-            body: {
-                system: EXTRACTION_SYSTEM,
-                parts: [{ type: "text", text: userMsg }],
-            },
-        });
-        const info = result?.data?.info ?? result?.data;
-        const parts: any[] = info?.parts ?? result?.data?.parts ?? [];
-        const raw = parts
-            .filter((p: any) => p.type === "text")
-            .map((p: any) => p.text ?? "")
-            .join("")
-            .trim();
-        if (!raw) throw new Error("empty response from model");
-        log(
-            `[EXTRACT] extractViaSession: model responded (${raw.length} chars)`,
-        );
-
-        const stripped = raw
-            .replace(/^```(?:json)?\s*/i, "")
-            .replace(/\s*```$/, "")
-            .trim();
-        parsed = JSON.parse(stripped);
-    } catch (e: any) {
-        log(`[EXTRACT] extractViaSession FAILED — ${e?.message ?? e}`);
-        return;
-    } finally {
-        if (ephemeralSessionId) {
-            client.session
-                .delete({ path: { id: ephemeralSessionId } })
-                .catch((e: any) =>
-                    log(
-                        `[EXTRACT] extractViaSession: ephemeral session delete failed (${ephemeralSessionId}): ${e?.message ?? e}`,
-                    ),
-                );
-        }
-    }
-
-    const nodes: ExtractionNode[] = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed?.nodes)
-          ? parsed.nodes
-          : [];
-    const edges: ExtractionEdge[] = Array.isArray(parsed?.edges)
-        ? parsed.edges
-        : [];
-    commitExtraction(
-        nodes,
-        edges,
-        store,
-        `${providerID}/${modelID} (session)`,
-        log,
-    );
-}
-
 // ─── Fetch with retry ─────────────────────────────────────────────────────────
 
 async function fetchWithRetry(
@@ -2472,29 +2361,36 @@ async function extractBatch(
 ): Promise<void> {
     if (!jobs.length) return;
 
+    // Resolve target once — all jobs share the same OpenRouter endpoint.
+    // If the key is missing, toast the first available client and abort the batch.
+    const target = resolveExtractionTarget(log);
+    if (!target) {
+        const firstClient = jobs[0]?.client;
+        if (firstClient) {
+            try {
+                await firstClient.tui.showToast({
+                    body: {
+                        message:
+                            "Engram: set OPENROUTER_API_KEY to enable automatic knowledge extraction",
+                        variant: "warning",
+                    },
+                });
+            } catch {}
+        }
+        log(
+            `[WARN] [EXTRACT] extractBatch: no OPENROUTER_API_KEY — ${jobs.length} job(s) skipped`,
+        );
+        return;
+    }
+
     const transcripts = await Promise.all(
         jobs.map((job) => fetchTranscript(job.sessionId, job.client, job.log)),
     );
 
-    const targetCache = new Map<
-        string,
-        ReturnType<typeof resolveExtractionTarget>
-    >();
-    const getTarget = (providerID: string, grpLog: (msg: string) => void) => {
-        if (!targetCache.has(providerID))
-            targetCache.set(
-                providerID,
-                resolveExtractionTarget(providerID, grpLog),
-            );
-        return targetCache.get(providerID)!;
-    };
-
     type Group = {
-        target: ReturnType<typeof resolveExtractionTarget>;
         store: EngramStore;
         providerID: string;
         modelID: string;
-        client: any;
         log: (msg: string) => void;
         entries: { sessionId: string; transcript: string }[];
     };
@@ -2513,24 +2409,17 @@ async function extractBatch(
             `[EXTRACT] extractBatch: transcript for sessionId=${job.sessionId} — ${t.length} chars`,
         );
         const jobStore = EngramStore.getInstance(job.storeSlug);
-        const target = getTarget(job.providerID, job.log);
-        const targetKey = target
-            ? `${target.url}::${target.model}`
-            : `session::${job.providerID}::${job.modelID}`;
-        const groupKey = `${targetKey}||${job.storeSlug}`;
-        if (!groups.has(groupKey)) {
-            groups.set(groupKey, {
-                target,
+        if (!groups.has(job.storeSlug)) {
+            groups.set(job.storeSlug, {
                 store: jobStore,
                 providerID: job.providerID,
                 modelID: job.modelID,
-                client: job.client,
                 log: job.log,
                 entries: [],
             });
         }
         groups
-            .get(groupKey)!
+            .get(job.storeSlug)!
             .entries.push({ sessionId: job.sessionId, transcript: t });
     }
 
@@ -2538,17 +2427,9 @@ async function extractBatch(
 
     await Promise.all(
         [...groups.values()].map(async (grp) => {
-            const {
-                target,
-                store,
-                providerID,
-                modelID,
-                client: grpClient,
-                log: grpLog,
-                entries,
-            } = grp;
+            const { store, providerID, modelID, log: grpLog, entries } = grp;
 
-            const combined =
+            let combined =
                 entries.length === 1
                     ? entries[0].transcript
                     : entries
@@ -2557,6 +2438,14 @@ async function extractBatch(
                                   `=== SESSION ${idx + 1} (${e.sessionId}) ===\n${e.transcript}`,
                           )
                           .join("\n\n");
+
+            if (combined.length > EXTRACTION_TRANSCRIPT_CHAR_LIMIT) {
+                const originalLen = combined.length;
+                combined = combined.slice(-EXTRACTION_TRANSCRIPT_CHAR_LIMIT);
+                grpLog(
+                    `[INFO] [EXTRACT] transcript truncated: ${originalLen} → ${combined.length} chars (tail kept)`,
+                );
+            }
 
             const { global: gi, project: pi } = store.activeItems();
             const existingItems =
@@ -2568,80 +2457,61 @@ async function extractBatch(
                     .join("\n") || "none";
             const userContent = `Existing nodes (check id, description AND content excerpt for semantic overlap — do not re-extract semantically similar nodes):\n${existingItems}\n\n---\n\n${combined}`;
 
-            if (target) {
-                let body: any;
-                try {
-                    const res = await fetchWithRetry(
-                        target.url,
-                        {
-                            method: "POST",
-                            headers: target.headers,
-                            body: JSON.stringify(
-                                target.buildBody(
-                                    target.model,
-                                    EXTRACTION_SYSTEM,
-                                    userContent,
-                                ),
-                            ),
-                        },
-                        grpLog,
-                    );
-                    if (!res.ok) {
-                        grpLog(
-                            `extraction API error ${res.status} from ${providerID}`,
-                        );
-                        return;
-                    }
-                    body = await res.json();
-                } catch (e: any) {
-                    grpLog(
-                        `extraction fetch failed after retries — ${e?.message ?? e}`,
-                    );
-                    return;
-                }
-                const raw = target.parseText(body);
-                let parsed: any;
-                try {
-                    parsed = JSON.parse(raw);
-                } catch {
-                    grpLog(
-                        `extraction: bad JSON from model — ${raw.slice(0, 120)}`,
-                    );
-                    return;
-                }
-                const nodes: ExtractionNode[] = Array.isArray(parsed)
-                    ? parsed
-                    : Array.isArray(parsed?.nodes)
-                      ? parsed.nodes
-                      : [];
-                const edges: ExtractionEdge[] = Array.isArray(parsed?.edges)
-                    ? parsed.edges
-                    : [];
-                commitExtraction(
-                    nodes,
-                    edges,
-                    store,
-                    `${providerID}/${target.model}`,
-                    grpLog,
-                );
-            } else {
-                await Promise.all(
-                    entries.map((e) =>
-                        extractViaSession(
-                            providerID,
-                            modelID,
-                            store,
-                            grpClient,
-                            grpLog,
-                            e.transcript,
-                        ).catch((err: any) =>
-                            grpLog(
-                                `session extract error [${e.sessionId}]: ${err?.message ?? err}`,
+            let body: any;
+            try {
+                const res = await fetchWithRetry(
+                    target.url,
+                    {
+                        method: "POST",
+                        headers: target.headers,
+                        body: JSON.stringify(
+                            target.buildBody(
+                                target.model,
+                                EXTRACTION_SYSTEM,
+                                userContent,
                             ),
                         ),
-                    ),
+                    },
+                    grpLog,
                 );
+                if (!res.ok) {
+                    grpLog(
+                        `extraction API error ${res.status} from OpenRouter`,
+                    );
+                    return;
+                }
+                body = await res.json();
+            } catch (e: any) {
+                grpLog(
+                    `extraction fetch failed after retries — ${e?.message ?? e}`,
+                );
+                return;
             }
+            const raw = target.parseText(body);
+            let parsed: any;
+            try {
+                parsed = JSON.parse(raw);
+            } catch {
+                grpLog(
+                    `extraction: bad JSON from model — ${raw.slice(0, 120)}`,
+                );
+                return;
+            }
+            const nodes: ExtractionNode[] = Array.isArray(parsed)
+                ? parsed
+                : Array.isArray(parsed?.nodes)
+                  ? parsed.nodes
+                  : [];
+            const edges: ExtractionEdge[] = Array.isArray(parsed?.edges)
+                ? parsed.edges
+                : [];
+            commitExtraction(
+                nodes,
+                edges,
+                store,
+                `openrouter/${target.model}`,
+                grpLog,
+            );
         }),
     );
 }
@@ -2809,8 +2679,19 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
         `[INFO] [INIT] initialized — slug="${slug}" dbKey=${dbKey} logLevel=${_rawLogLevel} extractEvery=${MESSAGE_EXTRACT_INTERVAL}msgs`,
     );
 
-    function scheduleExtraction(sessionId: string, sess: SessionContext): void {
-        if (sess.messageCount < EXTRACTION_MIN_MESSAGES) {
+    // Check at startup — log if the extraction key is missing
+    if (!process.env.OPENROUTER_API_KEY && !readEngramEnvKey()) {
+        log(
+            "[WARN] [INIT] OPENROUTER_API_KEY not set — add it to your environment or create ~/.config/engram/.env with OPENROUTER_API_KEY=sk-or-...",
+        );
+    }
+
+    function scheduleExtraction(
+        sessionId: string,
+        sess: SessionContext,
+        force = false,
+    ): void {
+        if (!force && sess.messageCount < EXTRACTION_MIN_MESSAGES) {
             log(
                 `[DEBUG] [EXTRACT] scheduleExtraction: skipping — only ${sess.messageCount} msg(s) (min=${EXTRACTION_MIN_MESSAGES})`,
             );
@@ -2884,7 +2765,7 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
             }
 
             log(`${type} — queuing extraction`);
-            scheduleExtraction(sessionId, sess);
+            scheduleExtraction(sessionId, sess, true);
 
             if (type === "session.idle") {
                 sessions.delete(sessionId);
@@ -3240,8 +3121,8 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         .string()
                         .describe(
                             "Full content in Markdown. " +
-                            "For finding nodes: include ## Files Modified, ## Symbols Affected, ## Motivation, ## Ordering Constraints sections. " +
-                            "For decision nodes: include ## Decision, ## Alternatives Considered, ## Rationale, ## Consequences sections."
+                                "For finding nodes: include ## Files Modified, ## Symbols Affected, ## Motivation, ## Ordering Constraints sections. " +
+                                "For decision nodes: include ## Decision, ## Alternatives Considered, ## Rationale, ## Consequences sections.",
                         ),
                     store: tool.schema
                         .string()
@@ -3277,8 +3158,8 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                     certainty,
                     importance,
                 }) {
-                    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id))
-                        return `Invalid id "${id}". Must be a lowercase-hyphenated slug (a-z0-9-), 1–40 chars, starting with a letter or digit.`;
+                    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id))
+                        return `Invalid id "${id}". Must be a lowercase slug (a-z0-9_-), 1–64 chars, starting with a letter or digit.`;
                     const key = (
                         storeArg === "global" ? "global" : "project"
                     ) as StoreKey;
@@ -3319,6 +3200,10 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         content.length > 1500 && kind === "finding"
                             ? `\n\nNote: this finding is ${content.length} chars. For multi-part work, consider splitting into separate focused finding nodes and adding edges — large single-finding nodes degrade graph retrieval quality.`
                             : "";
+                    if (blobHint)
+                        log(
+                            `[WARN] [TOOL] save_context: large finding saved — "${id}" is ${content.length} chars; consider splitting into atomic finding nodes with edges`,
+                        );
                     return `Saved "${id}" [${kind}] in ${key} store.${resolvedNote}${blobHint}`;
                 },
             }),
@@ -3539,14 +3424,17 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         );
                     }
                     if (outcome_kind === "finding") {
-                        edgeHints.push(
-                            `• If this finding modifies any files or structs, create interface nodes for those artifacts and add:\n  link_context(from_id="${id}", to_id="<file-or-struct-node>", edge_type="touches", rationale="...")`
+                        log(
+                            `[INFO] [TOOL] resolve_context: "${id}" resolved to finding — appending touches/causes/requires edge hints`,
                         );
                         edgeHints.push(
-                            `• If this finding was motivated by another finding/decision: link_context(from_id="<cause-node>", to_id="${id}", edge_type="causes", rationale="...")`
+                            `• If this finding modifies any files or structs, create interface nodes for those artifacts and add:\n  link_context(from_id="${id}", to_id="<file-or-struct-node>", edge_type="touches", rationale="...")`,
                         );
                         edgeHints.push(
-                            `• If this finding required another to be done first: link_context(from_id="${id}", to_id="<prerequisite>", edge_type="requires", rationale="...")`
+                            `• If this finding was motivated by another finding/decision: link_context(from_id="<cause-node>", to_id="${id}", edge_type="causes", rationale="...")`,
+                        );
+                        edgeHints.push(
+                            `• If this finding required another to be done first: link_context(from_id="${id}", to_id="<prerequisite>", edge_type="requires", rationale="...")`,
                         );
                     }
                     const hintBlock =
@@ -3644,6 +3532,10 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         rationale,
                     );
                     markScoresDirty();
+                    if (!rationale)
+                        log(
+                            `[WARN] [TOOL] link_context: edge ${from_id} -[${edge_type}]→ ${to_id} has no rationale — rationale is required for graph navigability`,
+                        );
                     log(
                         `[INFO] [TOOL] linked ${from_id} -[${edge_type}]→ ${to_id} strength=${s.toFixed(2)} rationale=${rationale ? `"${rationale.slice(0, 60)}"` : "none"}`,
                     );
@@ -3768,8 +3660,8 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                 async execute({ old_id, new_id }) {
                     if (old_id === new_id)
                         return "IDs are identical — nothing to do.";
-                    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(new_id))
-                        return `Invalid new_id "${new_id}". Must be a lowercase-hyphenated slug, 1–40 chars.`;
+                    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(new_id))
+                        return `Invalid new_id "${new_id}". Must be a lowercase slug (a-z0-9_-), 1–64 chars.`;
                     if (!store.resolve(old_id)) return `No node: "${old_id}".`;
                     if (store.resolve(new_id))
                         return `"${new_id}" already exists. Delete it first or choose a different name.`;
@@ -3924,6 +3816,7 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                     // ── Structural analysis ──────────────────────────────────────
                     const allItems = [...globalItems, ...projectItems];
                     const allIds = new Set(allItems.map((i) => i.id));
+                    let structuralIssueCount = 0;
 
                     if (allIds.size > 0) {
                         const warnings: string[] = [];
@@ -4018,20 +3911,31 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         const blobs = allItems
                             .filter((i) => {
                                 const outCount =
-                                    (idx.outByKey.global.get(i.id)?.length ?? 0) +
-                                    (idx.outByKey.project.get(i.id)?.length ?? 0);
+                                    (idx.outByKey.global.get(i.id)?.length ??
+                                        0) +
+                                    (idx.outByKey.project.get(i.id)?.length ??
+                                        0);
                                 const inCount =
-                                    (idx.inByKey.global.get(i.id)?.length ?? 0) +
-                                    (idx.inByKey.project.get(i.id)?.length ?? 0);
-                                return i.content.length > 2000 && outCount + inCount < 3;
+                                    (idx.inByKey.global.get(i.id)?.length ??
+                                        0) +
+                                    (idx.inByKey.project.get(i.id)?.length ??
+                                        0);
+                                return (
+                                    i.content.length > 2000 &&
+                                    outCount + inCount < 3
+                                );
                             })
                             .map((i) => {
                                 const outCount =
-                                    (idx.outByKey.global.get(i.id)?.length ?? 0) +
-                                    (idx.outByKey.project.get(i.id)?.length ?? 0);
+                                    (idx.outByKey.global.get(i.id)?.length ??
+                                        0) +
+                                    (idx.outByKey.project.get(i.id)?.length ??
+                                        0);
                                 const inCount =
-                                    (idx.inByKey.global.get(i.id)?.length ?? 0) +
-                                    (idx.inByKey.project.get(i.id)?.length ?? 0);
+                                    (idx.inByKey.global.get(i.id)?.length ??
+                                        0) +
+                                    (idx.inByKey.project.get(i.id)?.length ??
+                                        0);
                                 return `${i.id} (${i.content.length}chars, ${outCount + inCount} edges)`;
                             });
                         if (blobs.length)
@@ -4039,13 +3943,37 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                                 `Blob nodes — large content with few edges, likely encoding multiple concerns: ${blobs.join(", ")}. Split and link with causes/requires/touches edges.`,
                             );
 
+                        // Log structural analysis results to file for operator visibility
+                        if (orphans.length > 0)
+                            log(
+                                `[WARN] [GRAPH] list_context: ${orphans.length} orphan(s) — ${orphans.join(", ")}`,
+                            );
+                        if (unvalidatedRisks.length)
+                            log(
+                                `[WARN] [GRAPH] list_context: ${unvalidatedRisks.length} unvalidated risk(s) — ${unvalidatedRisks.join(", ")}`,
+                            );
+                        if (unresolvedPlans.length)
+                            log(
+                                `[WARN] [GRAPH] list_context: ${unresolvedPlans.length} unresolved plan(s) — ${unresolvedPlans.join(", ")}`,
+                            );
+                        if (dangling.size)
+                            log(
+                                `[WARN] [GRAPH] list_context: ${dangling.size} dangling target(s) — ${[...dangling].join(", ")}`,
+                            );
+                        if (blobs.length)
+                            log(
+                                `[WARN] [GRAPH] list_context: ${blobs.length} blob node(s) — ${blobs.join(", ")}`,
+                            );
+                        structuralIssueCount = warnings.length;
                         if (warnings.length)
                             sections.push(
                                 `[analysis]\n${warnings.map((w) => "  ! " + w).join("\n")}`,
                             );
                     }
 
-                    log(`list — ${total} node(s) across both stores`);
+                    log(
+                        `[INFO] [TOOL] list_context: ${total} node(s), ${structuralIssueCount} structural issue(s)`,
+                    );
                     return sections.length
                         ? sections.join("\n\n")
                         : "Engram is empty.";

@@ -1,12 +1,28 @@
 ## Agent Routing
 
-**Load the appropriate agent before any code is written or design begun.**
+The build agent is an orchestration agent. It classifies every request and dispatches the correct chain automatically — do not manually switch to subagents for tasks the build agent should own.
 
-| Task                                                                            | Agent                    |
-| ------------------------------------------------------------------------------- | ------------------------ |
-| Code modification, bug fix, refactor, config/dependency change                  | `@deterministic-coder`   |
-| Architecture design, trade-off analysis, ambiguous or underspecified problems   | `@exploratory-architect` |
-| Investigating unfamiliar topics, verifying claims, synthesizing docs or sources | `@expert-researcher`     |
+**Chains:**
+
+| Classification    | Conditions                                                                                            | Chain                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Simple task       | Bug fix, clear spec, routine refactor, config/dependency change — one obviously correct approach      | `coder → QA`                          |
+| Design task       | Architecture, trade-off analysis, ambiguous or underspecified requirements, multiple valid approaches | `architect → coder → QA`              |
+| Research task     | Unfamiliar territory, claim verification, library/API behaviour unknown                               | `researcher → coder → QA`             |
+| Research + design | Unknown territory AND design decisions remain open after research                                     | `researcher → architect → coder → QA` |
+
+Subagents and their roles:
+
+| Agent                    | Role                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `@deterministic-coder`   | Bug fixes, spec implementations, refactoring. Low temperature, haiku model. Edit/bash allowed. |
+| `@exploratory-architect` | Architecture design, trade-off analysis. Thinking enabled. Read-only.                          |
+| `@expert-researcher`     | Evidence gathering, source evaluation, synthesis. Thinking enabled. Read-only.                 |
+| `@qa-reviewer`           | Post-implementation code review. Returns PASS / NEEDS_FIX / BLOCK. Read-only.                  |
+
+Direct `@agent` mention is for manual override only. For normal tasks, send the request to build and let it route.
+
+`@explore` and `@general` are built-in OpenCode subagents not in the orchestration chain. Build cannot dispatch them. Use `@expert-researcher` for all codebase investigation and research tasks.
 
 ## Agentic Loops
 
@@ -20,17 +36,16 @@ If blocked (ambiguous requirement, missing context, failing test with no clear f
 
 ## Agent Handoffs
 
-For tasks that span multiple agents (e.g. research → design → implement), chain them sequentially:
+- Each phase must complete fully before the next dispatches — researcher before architect, architect before coder.
+- Pass output explicitly: summarise the previous agent's output in the task description sent to the next agent. Do not assume context carries over between subagent sessions.
+- Resolve all ambiguities before dispatching coder. Subagents that need to ask for user input can cause the session to loop.
+- The build agent does not read source files before dispatching. Classification is based on the request text and context nodes only.
 
-1. Complete the current agent's phase fully before switching
-2. Summarize the output explicitly before invoking the next agent — pass that summary as context, do not assume it carries over
-3. When handing off to a subagent via `task`, resolve all ambiguities first. Do not hand off an underspecified task — subagents that need to ask for user input can cause the session to loop
+**QA loop** (build agent manages this automatically):
 
-**Typical chains:**
-
-- Research then implement: `@expert-researcher` → summarize findings → `@deterministic-coder`
-- Design then implement: `@exploratory-architect` → confirm approach with user → `@deterministic-coder`
-- Research then design: `@expert-researcher` → summarize findings → `@exploratory-architect`
+1. After each coder task completes, qa-reviewer is dispatched with the task spec and changed file list.
+2. PASS → task complete. NEEDS_FIX → coder re-dispatched with findings. BLOCK → surfaced to user immediately.
+3. Maximum 2 retry cycles per task. If still failing after 2 retries, halted and surfaced to user.
 
 ## Output Rules
 
@@ -52,9 +67,10 @@ Ask when requirements are ambiguous or parameters are missing. Never assume. One
 
 ## Examples
 
-| Request                                                                  | Correct behavior                                                                                          |
-| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| "Fix this TypeScript error"                                              | Switch to `@deterministic-coder` → diagnose at `file:line`, apply fix, run tests                          |
-| "Design an event system for real-time updates"                           | Switch to `@exploratory-architect` → evaluate approaches, present trade-offs, confirm before implementing |
-| "What's the difference between let and const?"                           | Answer directly — no agent switch needed                                                                  |
-| "Research options for background job queues then implement the best one" | `@expert-researcher` → summarize findings → confirm choice → `@deterministic-coder`                       |
+| Request                                                                  | Correct behavior                                                                                                |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| "Fix this TypeScript error"                                              | Build classifies as Chain A → dispatches `@deterministic-coder` → QA                                            |
+| "Design an event system for real-time updates"                           | Build classifies as Chain B → dispatches `@exploratory-architect` → confirms plan → `@deterministic-coder` → QA |
+| "What's the difference between let and const?"                           | Build answers directly — no dispatch                                                                            |
+| "Research options for background job queues then implement the best one" | Build classifies as Chain C → `@expert-researcher` → `@deterministic-coder` → QA                                |
+| "Research and design a new caching strategy, then implement"             | Build classifies as Chain D → `@expert-researcher` → `@exploratory-architect` → `@deterministic-coder` → QA     |
