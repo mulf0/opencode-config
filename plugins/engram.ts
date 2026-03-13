@@ -405,7 +405,10 @@ const MANIFEST_LEGEND =
 // Manifest size scales with project size. The only real ceiling is the model's
 // context window — at ~4 chars/token, 100 000 chars ≈ 25 000 tokens, well within
 // 200k-window models. Override with ENGRAM_MANIFEST_CAP env var if needed.
-const MANIFEST_CHAR_CAP = parseInt(process.env.ENGRAM_MANIFEST_CAP ?? "100000", 10);
+const MANIFEST_CHAR_CAP = parseInt(
+    process.env.ENGRAM_MANIFEST_CAP ?? "100000",
+    10,
+);
 const SCORE_INTERVAL = 5; // rescore every N messages
 const RECENT_TERMS_WINDOW = 10; // sliding window size for Jaccard terms
 const RECALL_HALF_LIFE_DAYS = 10; // exponential decay λ = ln(2) / 10 ≈ 0.069
@@ -422,36 +425,11 @@ const MESSAGE_EXTRACT_INTERVAL =
         : 20;
 
 const ENGRAM_HEADER = `<engram>
-Persistent context graph. Nodes below are saved from previous sessions.
+Persistent context graph from previous sessions.
 
-At session start: scan these nodes and recall any that look relevant to the current task before asking clarifying questions. When a node ID looks relevant, call recall_context(id) to get full content and graph neighborhood. If unsure which node, use search_context(query) first.
+Start with the project-state node if present — it summarizes what is done, in progress, and planned. Then scan other nodes for anything relevant to the current task. Call recall_context(id) for full content and graph neighborhood. Use search_context(query) if the right node is not obvious from the manifest.
 
-During work, write to context when:
-- You choose between two or more approaches → save_context (decision)
-- A bug or unexpected behavior is confirmed → save_context (finding)
-- You learn how an external API, library, or system actually behaves → save_context (reference)
-- An assumption in the manifest turns out to be wrong → update_context (correct content/certainty)
-- A risk or plan node in the manifest reaches a conclusion → resolve_context
-- You establish a rule that must hold across the codebase → save_context (constraint)
-- You complete ONE sub-task of a multi-part implementation → save_context (finding) immediately
-
-Node granularity — one node = one atomic concept:
-- Multi-part work (e.g. 5 separate refactors): one finding per sub-task, edges between them.
-  Do NOT accumulate all work into one blob finding — it destroys graph navigability.
-- Finding content MUST include: Files Modified, Symbols Affected, Motivation, Ordering Constraints.
-- When 2+ nodes touch the same file or struct: create an interface node for that artifact,
-  then link_context(from_id=<finding>, to_id=<artifact-node>, edge_type="touches") from each.
-
-DESIGN EDGES BEFORE WRITING CONTENT — for each new node, identify related existing nodes
-and the correct edge type first, then write content. A node with no edges has zero value.
-
-Edge quick-reference:
-  requires  → B must complete before A, or A logically needs B
-  causes    → A motivated B being built or discovered
-  touches   → A modifies or is about file/struct/symbol B (use with interface nodes)
-  validates → A is evidence (benchmark, test, investigation) that confirms or refutes B
-
-Do not write for: steps you are about to take, routine tool calls, speculative ideas not yet tested, or anything already captured in the manifest.
+Knowledge extraction happens automatically — do not write to engram during normal work.
 
 `;
 
@@ -2060,7 +2038,51 @@ This enables graph-traversal answers to "what touches conn_t?" without reading e
 - Skip transient debugging, failed attempts, and obvious facts.
 - Ignore tool calls in the transcript — extract knowledge from content, not from actions.
 - Return {"nodes":[],"edges":[]} if nothing is worth saving.
-- Your ENTIRE response must be valid JSON. Not a single word outside the JSON object.`;
+- Your ENTIRE response must be valid JSON. Not a single word outside the JSON object.
+
+─── STATUS LIFECYCLE ────────────────────────────────────────────────────────────────────
+Use status to distinguish completed work from active context:
+  "active"     — current, relevant, may still change or inform ongoing work
+  "archived"   — completed, resolved, no longer actionable (but preserved for history)
+  "deprecated" — superseded by a newer node
+
+When work described in the transcript is clearly finished:
+  • The finding recording that work gets status="active" (it's new knowledge).
+  • Any existing plan or risk node that the work resolves should get a supersedes edge:
+    {"from_id":"<new-finding>","to_id":"<old-plan>","edge_type":"supersedes","strength":1.0,
+     "rationale":"implemented in this session"}
+    The extraction system will archive the superseded node automatically.
+  • Do NOT set new findings to archived — they are active knowledge about what was done.
+
+When a plan in the existing nodes list was executed in this transcript, always emit a
+supersedes edge from the implementation finding to that plan. This is how the graph
+tracks "is this done?" without requiring the model to read node content.
+
+─── PROJECT STATE SUMMARY ───────────────────────────────────────────────────────────────
+ALWAYS emit exactly one node with id="project-state", kind="finding", scope="project",
+importance=5, status="active". This node is the cold-start orientation for new sessions.
+
+Content template:
+  ## Done
+  <bullet list of what has been completed — drawn from existing archived/superseded nodes
+   AND any new work completed in this transcript>
+
+  ## In Progress
+  <bullet list of active work — things started but not finished, or active findings
+   that represent ongoing concerns>
+
+  ## Planned
+  <bullet list of active plan nodes — future work not yet started>
+
+  ## Key Decisions
+  <bullet list of active decision/constraint nodes that shape current work>
+
+If a project-state node already exists in the existing nodes list, your new emission
+replaces it (the upsert handles this). Always regenerate it from the full picture —
+do not append to the old one.
+
+The project-state node is EXEMPT from the "no orphans" rule — it does not need edges
+because it is a summary, not a navigational node.`;
 
 // ─── Provider routing ─────────────────────────────────────────────────────────
 
@@ -2235,6 +2257,37 @@ function commitExtraction(
         for (const [storeKey, bucket] of edgesByKey) {
             store.commitEdgeBatch(storeKey, bucket);
         }
+
+        // Auto-archive targets of supersedes edges
+        let archivedCount = 0;
+        for (const e of validEdges) {
+            if (e.edge_type !== "supersedes") continue;
+            const target = store.resolve(e.to_id);
+            if (!target) continue;
+            const [item, targetKey] = target;
+            if (item.status === "archived" || item.status === "deprecated")
+                continue;
+            store.upsert(
+                targetKey,
+                item.id,
+                item.kind,
+                "archived",
+                item.authority,
+                item.certainty,
+                item.importance,
+                item.description,
+                item.content,
+                item,
+            );
+            archivedCount++;
+            log(
+                `[EXTRACT]   auto-archived "${item.id}" [${item.kind}] — superseded by "${e.from_id}"`,
+            );
+        }
+        if (archivedCount > 0)
+            log(
+                `[EXTRACT] auto-archived ${archivedCount} node(s) via supersedes edges`,
+            );
     }
 
     log(
@@ -2389,8 +2442,6 @@ async function extractBatch(
 
     type Group = {
         store: EngramStore;
-        providerID: string;
-        modelID: string;
         log: (msg: string) => void;
         entries: { sessionId: string; transcript: string }[];
     };
@@ -2412,8 +2463,6 @@ async function extractBatch(
         if (!groups.has(job.storeSlug)) {
             groups.set(job.storeSlug, {
                 store: jobStore,
-                providerID: job.providerID,
-                modelID: job.modelID,
                 log: job.log,
                 entries: [],
             });
@@ -2427,7 +2476,7 @@ async function extractBatch(
 
     await Promise.all(
         [...groups.values()].map(async (grp) => {
-            const { store, providerID, modelID, log: grpLog, entries } = grp;
+            const { store, log: grpLog, entries } = grp;
 
             let combined =
                 entries.length === 1
@@ -3822,8 +3871,10 @@ export const EngramPlugin: Plugin = async ({ directory, $, client }) => {
                         const warnings: string[] = [];
 
                         // Orphans: nodes with no edges in either direction
+                        // project-state is exempt — it's a summary node that doesn't need edges
                         const orphans = [...allIds].filter(
                             (id) =>
+                                id !== "project-state" &&
                                 !(
                                     idx.outByKey.global.has(id) ||
                                     idx.outByKey.project.has(id) ||
