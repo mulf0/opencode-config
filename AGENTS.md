@@ -13,12 +13,12 @@ The build agent is an orchestration agent. It classifies every request and dispa
 
 Subagents and their roles:
 
-| Agent                    | Role                                                                                           |
-| ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `@deterministic-coder`   | Bug fixes, spec implementations, refactoring. Low temperature, haiku model. Edit/bash allowed. |
-| `@exploratory-architect` | Architecture design, trade-off analysis. Thinking enabled. Read-only.                          |
-| `@expert-researcher`     | Evidence gathering, source evaluation, synthesis. Thinking enabled. Read-only.                 |
-| `@qa-reviewer`           | Post-implementation code review. Returns PASS / NEEDS_FIX / BLOCK. Read-only.                  |
+| Agent                    | Role                                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `@deterministic-coder`   | Bug fixes, spec implementations, refactoring. Low temperature, haiku model. Edit/bash allowed.             |
+| `@exploratory-architect` | Architecture design, trade-off analysis. Thinking enabled. No file edits.                                  |
+| `@expert-researcher`     | Evidence gathering, source evaluation, synthesis. Thinking enabled. No file edits.                         |
+| `@qa-reviewer`           | Post-implementation code review. Returns PASS / NEEDS_FIX / BLOCK. Read-only.                              |
 
 Direct `@agent` mention is for manual override only. For normal tasks, send the request to build and let it route.
 
@@ -36,10 +36,11 @@ If blocked (ambiguous requirement, missing context, failing test with no clear f
 
 ## Agent Handoffs
 
+- Chains execute end-to-end without pausing for user confirmation. A completed design or research output is the input for the next phase, not a checkpoint. Only stop the chain if a subagent returned a clarifying question it could not resolve.
 - Each phase must complete fully before the next dispatches — researcher before architect, architect before coder.
-- Pass output explicitly: summarise the previous agent's output in the task description sent to the next agent. Do not assume context carries over between subagent sessions.
+- If a subagent's output is long, it should include a concise summary at the end. The build agent passes that summary to the next agent in the task description.
 - Resolve all ambiguities before dispatching coder. Subagents that need to ask for user input can cause the session to loop.
-- The build agent does not read source files before dispatching. Classification is based on the request text and context nodes only.
+- The build agent does not read source files before dispatching. Classification is based on the request text only.
 
 **QA loop** (build agent manages this automatically):
 

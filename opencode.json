@@ -1,20 +1,10 @@
 {
     "$schema": "https://opencode.ai/config.json",
-    "instructions": [
-        "./AGENTS.md"
-    ],
-    "plugin": [
-        "~/.config/opencode/plugins/engram.ts"
-    ],
+    "instructions": ["./AGENTS.md"],
     "lsp": {
         "sol-lsp": {
-            "command": [
-                "nomicfoundation-solidity-language-server",
-                "--stdio"
-            ],
-            "extensions": [
-                ".sol"
-            ]
+            "command": ["nomicfoundation-solidity-language-server", "--stdio"],
+            "extensions": [".sol"]
         }
     },
     "provider": {
@@ -23,18 +13,14 @@
                 "moonshotai/kimi-k2.5": {
                     "options": {
                         "provider": {
-                            "only": [
-                                "moonshotai"
-                            ]
+                            "only": ["moonshotai"]
                         }
                     }
                 },
                 "qwen/qwen3-coder": {
                     "options": {
                         "provider": {
-                            "only": [
-                                "chutes/fp8"
-                            ]
+                            "only": ["chutes/fp8"]
                         }
                     }
                 },
@@ -42,9 +28,7 @@
                     "options": {
                         "temperature": 0.5,
                         "provider": {
-                            "only": [
-                                "atlas-cloud/fp8"
-                            ]
+                            "only": ["atlas-cloud/fp8"]
                         }
                     }
                 },
@@ -52,9 +36,7 @@
                     "options": {
                         "temperature": 0.35,
                         "provider": {
-                            "only": [
-                                "parasail/fp8"
-                            ]
+                            "only": ["parasail/fp8"]
                         }
                     }
                 },
@@ -91,7 +73,7 @@
     "agent": {
         "build": {
             "temperature": 0.35,
-            "prompt": "Orchestration agent. Classify requests and dispatch agent chains per AGENTS.md. Do not write code, research, or design.\n\nDo not read source files before dispatching. Classify from request text and context nodes only.\n\nCONTEXT PASSING: Pass context inline in task descriptions — the full information each subagent needs. Read the task return value and pass relevant parts forward to the next phase. Subagents do not write to engram.\n\nBATCHING: For multi-task workloads, group by shared file ownership, then subsystem, respect dependency order, verification last. Batch size 2-3. State batches and rationale before dispatching. Dispatch independent batches in parallel.",
+            "prompt": "Orchestration agent. Classify requests and dispatch agent chains per AGENTS.md. Do not write code, research, or design.\n\nDo not read source files before dispatching. Classify from request text only.\n\nBATCHING: For multi-task workloads, group by shared file ownership, then subsystem, respect dependency order, verification last. Batch size 2-3. State batches and rationale before dispatching. Dispatch independent batches in parallel.",
             "permission": {
                 "task": {
                     "*": "allow",
@@ -106,17 +88,6 @@
             "temperature": 0.2,
             "steps": 15,
             "color": "#e67e22",
-            "tools": {
-                "save_context": false,
-                "update_context": false,
-                "resolve_context": false,
-                "link_context": false,
-                "delete_context": false,
-                "move_context": false,
-                "rename_context": false,
-                "rebuild_fts": false,
-                "stale_context": false
-            },
             "permission": {
                 "edit": "deny",
                 "bash": "deny",
@@ -130,17 +101,6 @@
             "temperature": 0.15,
             "steps": 30,
             "color": "#4a90d9",
-            "tools": {
-                "save_context": false,
-                "update_context": false,
-                "resolve_context": false,
-                "link_context": false,
-                "delete_context": false,
-                "move_context": false,
-                "rename_context": false,
-                "rebuild_fts": false,
-                "stale_context": false
-            },
             "permission": {
                 "edit": "allow",
                 "bash": "allow",
@@ -157,17 +117,6 @@
                 "type": "enabled",
                 "budgetTokens": 10000
             },
-            "tools": {
-                "save_context": false,
-                "update_context": false,
-                "resolve_context": false,
-                "link_context": false,
-                "delete_context": false,
-                "move_context": false,
-                "rename_context": false,
-                "rebuild_fts": false,
-                "stale_context": false
-            },
             "permission": {
                 "edit": "deny",
                 "bash": "deny",
@@ -183,17 +132,6 @@
             "thinking": {
                 "type": "enabled",
                 "budgetTokens": 5000
-            },
-            "tools": {
-                "save_context": false,
-                "update_context": false,
-                "resolve_context": false,
-                "link_context": false,
-                "delete_context": false,
-                "move_context": false,
-                "rename_context": false,
-                "rebuild_fts": false,
-                "stale_context": false
             },
             "permission": {
                 "edit": "deny",
