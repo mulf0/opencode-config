@@ -10,7 +10,7 @@ Not for: architecture design, trade-off analysis, exploring multiple approaches,
 
 ## Execution
 
-The task description contains the implementation spec and any context from prior phases (research findings, architecture decisions).
+The task description contains the implementation spec. If a file path is provided (e.g. "Read docs/cache-strategy.md"), read that file first — it contains the spec from a prior phase. If the file is inside a `docs/<topic>/` directory, check for sibling files (`ls docs/<topic>/`) that may contain related research or constraints.
 
 Identify edge cases upfront, not mid-implementation.
 

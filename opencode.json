@@ -60,12 +60,8 @@
         },
         "anthropic": {
             "models": {
-                "claude-sonnet-4-5": {
-                    "options": {
-                        "temperature": 0.35,
-                        "textVerbosity": "low",
-                        "reasoningEffort": "high"
-                    }
+                "claude-sonnet-4-6": {
+                    "options": {}
                 }
             }
         }
@@ -73,7 +69,7 @@
     "agent": {
         "build": {
             "temperature": 0.35,
-            "prompt": "Orchestration agent. Classify requests and dispatch agent chains per AGENTS.md. Do not write code, research, or design.\n\nDo not read source files before dispatching. Classify from request text only.\n\nBATCHING: For multi-task workloads, group by shared file ownership, then subsystem, respect dependency order, verification last. Batch size 2-3. State batches and rationale before dispatching. Dispatch independent batches in parallel.",
+            "prompt": "Orchestration agent. Classify requests and dispatch agent chains per AGENTS.md. Do not write code, research, or design.\n\nDo not read source files or docs/ files before dispatching. Classify from request text only.\n\nHANDOFFS: Subagents return only a file path (e.g. docs/topic.md). Pass that path to the next agent: \"Read docs/topic.md, then [task].\" Do not read the file yourself.\n\nSHORT-CIRCUIT: If a subagent returns \"no action needed\" or \"keep current approach\" instead of a file path, stop the chain. Do not dispatch coder with nothing to do.\n\nBATCHING: For multi-task workloads, group by shared file ownership, then subsystem, respect dependency order, verification last. Batch size 2-3. State batches and rationale before dispatching. Dispatch independent batches in parallel.",
             "permission": {
                 "task": {
                     "*": "allow",
@@ -84,14 +80,18 @@
         "qa-reviewer": {
             "description": "Post-implementation code review. Reads changed files against the original task spec and returns a structured verdict: PASS, NEEDS_FIX, or BLOCK. Never modifies files. Always run after deterministic-coder completes a task.",
             "mode": "subagent",
-            "model": "anthropic/claude-sonnet-4-5",
+            "model": "anthropic/claude-sonnet-4-6",
             "temperature": 0.2,
-            "steps": 15,
+            "steps": 20,
             "color": "#e67e22",
             "permission": {
                 "edit": "deny",
                 "bash": "deny",
                 "webfetch": "deny"
+            },
+            "thinking": {
+                "type": "enabled",
+                "budgetTokens": 3000
             }
         },
         "deterministic-coder": {
@@ -110,15 +110,16 @@
         "exploratory-architect": {
             "description": "Architecture design, algorithm optimization, and complex problem-solving. Use when multiple valid solutions exist, trade-offs need evaluation, or requirements are ambiguous.",
             "mode": "subagent",
+            "model": "anthropic/claude-sonnet-4-6",
             "temperature": 0.6,
             "steps": 15,
             "color": "#9b59b6",
             "thinking": {
                 "type": "enabled",
-                "budgetTokens": 10000
+                "budgetTokens": 5000
             },
             "permission": {
-                "edit": "deny",
+                "edit": "allow",
                 "bash": "deny",
                 "webfetch": "allow"
             }
@@ -126,15 +127,16 @@
         "expert-researcher": {
             "description": "Evidence gathering, source evaluation, and synthesis. Use when investigating unfamiliar topics, verifying claims, comparing solutions, or when confidence in an answer is below high.",
             "mode": "subagent",
+            "model": "anthropic/claude-sonnet-4-6",
             "temperature": 0.35,
             "steps": 20,
             "color": "#27ae60",
             "thinking": {
                 "type": "enabled",
-                "budgetTokens": 5000
+                "budgetTokens": 3000
             },
             "permission": {
-                "edit": "deny",
+                "edit": "allow",
                 "bash": "deny",
                 "webfetch": "allow"
             }

@@ -16,8 +16,8 @@ Subagents and their roles:
 | Agent                    | Role                                                                                                       |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `@deterministic-coder`   | Bug fixes, spec implementations, refactoring. Low temperature, haiku model. Edit/bash allowed.             |
-| `@exploratory-architect` | Architecture design, trade-off analysis. Thinking enabled. No file edits.                                  |
-| `@expert-researcher`     | Evidence gathering, source evaluation, synthesis. Thinking enabled. No file edits.                         |
+| `@exploratory-architect` | Architecture design, trade-off analysis. Thinking enabled. Writes specs to `docs/`.                        |
+| `@expert-researcher`     | Evidence gathering, source evaluation, synthesis. Thinking enabled. Writes findings to `docs/`.            |
 | `@qa-reviewer`           | Post-implementation code review. Returns PASS / NEEDS_FIX / BLOCK. Read-only.                              |
 
 Direct `@agent` mention is for manual override only. For normal tasks, send the request to build and let it route.
@@ -36,17 +36,25 @@ If blocked (ambiguous requirement, missing context, failing test with no clear f
 
 ## Agent Handoffs
 
-- Chains execute end-to-end without pausing for user confirmation. A completed design or research output is the input for the next phase, not a checkpoint. Only stop the chain if a subagent returned a clarifying question it could not resolve.
+- Chains execute end-to-end without pausing for user confirmation. Only stop the chain if a subagent returned a clarifying question it could not resolve.
 - Each phase must complete fully before the next dispatches — researcher before architect, architect before coder.
-- If a subagent's output is long, it should include a concise summary at the end. The build agent passes that summary to the next agent in the task description.
+- **File-based handoffs:** Researcher and architect write output to `docs/<topic>.md` and return ONLY the file path — no summary, no recap. Build tells the next agent: "Read docs/<topic>.md, then [task]." The receiving agent reads the file directly. This avoids duplicating content through the build agent's context.
+- If a subagent's output is trivial (a clarifying question, a one-sentence answer), pass it inline instead of writing a file.
+- **Short-circuit:** If a researcher's finding is "no action needed" or an architect's recommendation is "keep current approach," stop the chain. Do not dispatch coder with nothing to do.
 - Resolve all ambiguities before dispatching coder. Subagents that need to ask for user input can cause the session to loop.
-- The build agent does not read source files before dispatching. Classification is based on the request text only.
+- The build agent does not read source files or handoff files. Classification is based on the request text only.
 
 **QA loop** (build agent manages this automatically):
 
 1. After each coder task completes, qa-reviewer is dispatched with the task spec and changed file list.
 2. PASS → task complete. NEEDS_FIX → coder re-dispatched with findings. BLOCK → surfaced to user immediately.
 3. Maximum 2 retry cycles per task. If still failing after 2 retries, halted and surfaced to user.
+
+## Docs structure
+
+Single-file topics go in `docs/<topic>.md`. When a topic has multiple docs (research + design, or needs splitting for size), use a directory: `docs/<topic>/research.md`, `docs/<topic>/design.md`. The directory name is the grouping — the coder can `ls docs/<topic>/` to see everything relevant.
+
+Examples: `docs/hot-path/research.md`, `docs/hot-path/optimizations.md` — not `docs/hot-path-research.md`, `docs/hot-path-optimizations.md`. End each file with `Related:` links to sibling files in the same directory or related topics elsewhere.
 
 ## Output Rules
 
@@ -75,3 +83,4 @@ Ask when requirements are ambiguous or parameters are missing. Never assume. One
 | "What's the difference between let and const?"                           | Build answers directly — no dispatch                                                                            |
 | "Research options for background job queues then implement the best one" | Build classifies as Chain C → `@expert-researcher` → `@deterministic-coder` → QA                                |
 | "Research and design a new caching strategy, then implement"             | Build classifies as Chain D → `@expert-researcher` → `@exploratory-architect` → `@deterministic-coder` → QA     |
+| "Is our auth flow secure against replay attacks?"                        | Build classifies as Chain C → `@expert-researcher` → finding is "yes, already handled" → chain stops            |
