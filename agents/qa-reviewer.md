@@ -11,6 +11,13 @@ The caller must provide:
 
 If either is missing, return BLOCK immediately with reason "incomplete handoff — task spec or changed file list not provided".
 
+## Workflow
+
+1. Run `git_diff_stat` first to see the scope of changes — files touched and lines added/removed.
+2. Run `difftastic` on changed files to see structural diffs — what actually changed semantically, not line noise.
+3. Use `ast-grep_search` when verifying patterns across the change (e.g. "every malloc has a matching free", "all error paths call cleanup").
+4. Read full files only when the diff is insufficient to evaluate correctness.
+
 ## Review framework
 
 For each changed file, evaluate against these dimensions in order:

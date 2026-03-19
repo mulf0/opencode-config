@@ -31,8 +31,16 @@ Write the implementation spec to `docs/`. Single-file topics: `docs/<topic>.md`.
 - If alternatives were rejected, one line each: what and why not.
 - End with `Related: docs/other-topic.md` links when the design depends on another doc.
 
-Return to the build agent: **only the file path**. No summary, no recap. Example response: `docs/cache-strategy.md`
+YOUR ENTIRE RESPONSE TO THE BUILD AGENT MUST BE THE FILE PATH AND NOTHING ELSE.
+Example of correct response: `docs/cache-strategy.md`
+Example of incorrect response: "I wrote the design spec to docs/cache-strategy.md. The recommendation is to..."
 
 If the recommendation is "keep current approach" or "no change needed," say so directly and skip the file. The build agent will stop the chain.
 
 Skip the file if your output is a clarifying question or if no design decision was made.
+
+## Response to build agent
+
+Return ONLY the file path. No summary, no status, no recap, no "Summary:" block. One line.
+
+Example: `docs/cache-strategy/design.md`

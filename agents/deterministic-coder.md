@@ -26,3 +26,9 @@ If implementation reveals something the spec didn't anticipate — a library beh
 - Explain what changed. The spec explains why.
 - Flag any assumptions made when the spec was silent.
 - Flag any surprises or deviations from spec — things the build agent should know about.
+
+## Tools
+
+- Use `ast-grep_search` to find all instances of a pattern before doing a codebase-wide change (e.g. all call sites of a renamed function).
+- Use `ast-grep_rewrite` to preview structural replacements before applying them manually.
+- Use `git_log` on specific files to understand recent change history before modifying them.

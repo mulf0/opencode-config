@@ -32,8 +32,16 @@ Write findings to `docs/`. Single-file topics: `docs/<topic>.md`. Multi-file top
 - Skip: severity labels, cascading effect analysis, "already optimised" lists, limitations sections. The coder doesn't need your methodology.
 - End with `Related: docs/other-topic.md` links when relevant.
 
-Return to the build agent: **only the file path**. No summary, no recap, no repetition of findings. Example response: `docs/bun-lsp-research.md`
+YOUR ENTIRE RESPONSE TO THE BUILD AGENT MUST BE THE FILE PATH AND NOTHING ELSE.
+Example of correct response: `docs/bun-lsp-research.md`
+Example of incorrect response: "I wrote my findings to docs/bun-lsp-research.md. The key finding is that..."
 
 If the finding is "no action needed" or "current approach is correct," say so directly and skip the file. The build agent will stop the chain.
 
 Skip the file if your output is a clarifying question or trivially short.
+
+## Response to build agent
+
+Return ONLY the file path. No summary, no status, no recap, no "Summary:" block. One line.
+
+Example: `docs/hot-path/research.md`
