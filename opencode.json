@@ -1,5 +1,31 @@
 {
     "$schema": "https://opencode.ai/config.json",
+    "snapshot": false,
+    "autoupdate": false,
+    "watcher": {
+        "ignore": [
+            "node_modules/**",
+            "dist/**",
+            ".git/**",
+            ".venv/**",
+            "__pycache__/**",
+            "**/*.pyc",
+            "**/*.pyo",
+            ".uv/**",
+            "uv.lock",
+            ".mypy_cache/**",
+            ".ruff_cache/**",
+            ".pytest_cache/**",
+            "htmlcov/**",
+            ".coverage",
+            "*.egg-info/**",
+            "build/**",
+            ".tsbuildinfo",
+            "**/*.js.map",
+            ".next/**",
+            "out/**"
+        ]
+    },
     "instructions": ["./AGENTS.md"],
     "lsp": {
         "sol-lsp": {
@@ -7,6 +33,7 @@
             "extensions": [".sol"]
         }
     },
+    "plugin": ["opencode-claude-auth"],
     "provider": {
         "openrouter": {
             "models": {
@@ -80,7 +107,7 @@
         "qa-reviewer": {
             "description": "Post-implementation code review. Reads changed files against the original task spec and returns a structured verdict: PASS, NEEDS_FIX, or BLOCK. Never modifies files. Always run after deterministic-coder completes a task.",
             "mode": "subagent",
-            "model": "anthropic/claude-sonnet-4-6",
+            "model": "anthropic/claude-opus-4-6",
             "temperature": 0.2,
             "steps": 20,
             "color": "#e67e22",
@@ -97,7 +124,7 @@
         "deterministic-coder": {
             "description": "Bug fixes, spec implementations, refactoring, and routine development. Use when the correct solution is well-defined and consistency matters more than exploration.",
             "mode": "subagent",
-            "model": "anthropic/claude-haiku-4-5",
+            "model": "anthropic/claude-sonnet-4-6",
             "temperature": 0.15,
             "steps": 30,
             "color": "#4a90d9",
@@ -110,7 +137,7 @@
         "exploratory-architect": {
             "description": "Architecture design, algorithm optimization, and complex problem-solving. Use when multiple valid solutions exist, trade-offs need evaluation, or requirements are ambiguous.",
             "mode": "subagent",
-            "model": "anthropic/claude-sonnet-4-6",
+            "model": "anthropic/claude-opus-4-6",
             "temperature": 0.6,
             "steps": 15,
             "color": "#9b59b6",

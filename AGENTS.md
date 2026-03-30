@@ -16,8 +16,8 @@ Subagents and their roles:
 | Agent                    | Role                                                                                                       |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `@deterministic-coder`   | Bug fixes, spec implementations, refactoring. Low temperature, haiku model. Edit/bash allowed.             |
-| `@exploratory-architect` | Architecture design, trade-off analysis. Thinking enabled. Writes specs to `docs/`.                        |
-| `@expert-researcher`     | Evidence gathering, source evaluation, synthesis. Thinking enabled. Writes findings to `docs/`.            |
+| `@exploratory-architect` | Architecture design, trade-off analysis. Thinking enabled. Writes specs to `.codememory/` at the repo root. |
+| `@expert-researcher`     | Evidence gathering, source evaluation, synthesis. Thinking enabled. Writes findings to `.codememory/` at the repo root. |
 | `@qa-reviewer`           | Post-implementation code review. Returns PASS / NEEDS_FIX / BLOCK. Read-only.                              |
 
 Direct `@agent` mention is for manual override only. For normal tasks, send the request to build and let it route.
@@ -38,7 +38,7 @@ If blocked (ambiguous requirement, missing context, failing test with no clear f
 
 - Chains execute end-to-end without pausing for user confirmation. Only stop the chain if a subagent returned a clarifying question it could not resolve.
 - Each phase must complete fully before the next dispatches — researcher before architect, architect before coder.
-- **File-based handoffs:** Researcher and architect write output to `docs/<topic>.md` and return ONLY the file path — no summary, no recap. Build tells the next agent: "Read docs/<topic>.md, then [task]." The receiving agent reads the file directly. This avoids duplicating content through the build agent's context.
+- **File-based handoffs:** Researcher and architect write output to `.codememory/<topic>.md` (always at the root of the given git repo) and return ONLY the file path — no summary, no recap. Build tells the next agent: "Read .codememory/<topic>.md, then [task]." The receiving agent reads the file directly. This avoids duplicating content through the build agent's context.
 - If a subagent's output is trivial (a clarifying question, a one-sentence answer), pass it inline instead of writing a file.
 - **Short-circuit:** If a researcher's finding is "no action needed" or an architect's recommendation is "keep current approach," stop the chain. Do not dispatch coder with nothing to do.
 - Resolve all ambiguities before dispatching coder. Subagents that need to ask for user input can cause the session to loop.
@@ -50,11 +50,11 @@ If blocked (ambiguous requirement, missing context, failing test with no clear f
 2. PASS → task complete. NEEDS_FIX → coder re-dispatched with findings. BLOCK → surfaced to user immediately.
 3. Maximum 2 retry cycles per task. If still failing after 2 retries, halted and surfaced to user.
 
-## Docs structure
+## .codememory structure
 
-Single-file topics go in `docs/<topic>.md`. When a topic has multiple docs (research + design, or needs splitting for size), use a directory: `docs/<topic>/research.md`, `docs/<topic>/design.md`. The directory name is the grouping — the coder can `ls docs/<topic>/` to see everything relevant.
+Single-file topics go in `.codememory/<topic>.md` (always at the root of the given git repo). When a topic has multiple docs (research + design, or needs splitting for size), use a directory: `.codememory/<topic>/research.md`, `.codememory/<topic>/design.md`. The directory name is the grouping — the coder can `ls .codememory/<topic>/` to see everything relevant.
 
-Examples: `docs/hot-path/research.md`, `docs/hot-path/optimizations.md` — not `docs/hot-path-research.md`, `docs/hot-path-optimizations.md`. End each file with `Related:` links to sibling files in the same directory or related topics elsewhere.
+Examples: `.codememory/hot-path/research.md`, `.codememory/hot-path/optimizations.md` — not `.codememory/hot-path-research.md`, `.codememory/hot-path-optimizations.md`. End each file with `Related:` links to sibling files in the same directory or related topics elsewhere.
 
 ## Output Rules
 
