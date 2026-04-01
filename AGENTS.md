@@ -74,6 +74,35 @@ Ask when requirements are ambiguous or parameters are missing. Never assume. One
 - `if-else` blocks. No ternary operators.
 - Simplest implementation first. Add complexity only when simple proves insufficient.
 
+## Tool Selection
+
+**Structural search → `ast-grep_search`**: function calls, import statements, class/type definitions, API usage patterns, if-block shapes. Prefer over `grep` when the match depends on code structure rather than text content.
+
+**Text/content search → `grep`**: log messages, comments, string literals, config values, variable names in isolation.
+
+**Structural refactor → `ast-grep_rewrite`**: dry-run only. Use it to preview scope and verify matches before applying changes with the edit tool. Never assume the rewrite output is applied — always follow with explicit edits.
+
+**Metavar rules (ast-grep patterns fail silently if violated)**:
+- Names must be UPPERCASE: `$ARGS`, `$BODY`, `$_` — not `$args`, `$body`
+- `$NAME` matches exactly one AST node; use `$$$NAME` for zero-or-more (variadic args, statement lists)
+- Pattern must be valid parseable code for the target language
+
+**`ast-grep_rewrite` parameter**: the replacement string parameter is named `rewrite` in the tool schema (matching CLI `--rewrite`).
+
+**Decision rule — use `ast-grep_search` instead of `grep` when ANY of these apply:**
+- Searching for how a function/method is called: `$F($$$ARGS)`, `$OBJ.$METHOD($$$ARGS)`
+- Finding all imports of a module: `import $$$IMPORTS from "module"`
+- Locating class or type definitions: `class $NAME { $$$BODY }`, `type $NAME = $DEF`
+- Matching control flow shapes: `if ($COND) { $$$BODY }`, `for ($INIT; $COND; $STEP) { $$$BODY }`
+- Finding assignments to specific patterns: `const $NAME = $VALUE`
+- Scoping a refactor before applying edits (use `ast-grep_rewrite` dry-run first)
+
+**Decision rule — use `grep` instead of `ast-grep_search` when ANY of these apply:**
+- Searching inside string literals, comments, or documentation
+- Looking for a specific variable/function name without caring about surrounding structure
+- Matching log output, error messages, or config keys
+- The search term is plain text, not a code pattern
+
 ## Examples
 
 | Request                                                                  | Correct behavior                                                                                                |

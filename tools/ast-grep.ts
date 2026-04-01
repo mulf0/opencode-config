@@ -3,8 +3,9 @@ import { tool } from "@opencode-ai/plugin"
 export const search = tool({
     description:
         "Structural code search using AST patterns. Finds code by syntax structure, not text. " +
-        "Example patterns: '$F($ARGS)' matches any function call, 'if ($COND) { $BODY }' matches if blocks. " +
-        "Use $NAME for named wildcards, $$$REST for variadic matches.",
+        "Example patterns: '$F($$$ARGS)' matches any function call (zero or more args), 'if ($COND) { $$$BODY }' matches if blocks. " +
+        "Use $NAME for named single-node wildcards, $$$NAME for variadic matches. " +
+        "Metavar names must be UPPERCASE (A-Z, underscore, digits). Patterns must be valid parseable code for the target language.",
     args: {
         pattern: tool.schema
             .string()
@@ -20,10 +21,10 @@ export const search = tool({
     },
     async execute(args, context) {
         const searchPath = args.path ?? context.worktree
-        const cmdArgs = ["scan", "-p", args.pattern, searchPath, "--color", "never"]
+        const cmdArgs = ["run", "-p", args.pattern, searchPath, "--color", "never"]
         if (args.lang) cmdArgs.splice(3, 0, "-l", args.lang)
         try {
-            const proc = Bun.spawn(["sg", ...cmdArgs], {
+            const proc = Bun.spawn(["ast-grep", ...cmdArgs], {
                 cwd: context.worktree,
                 stdout: "pipe",
                 stderr: "pipe",
@@ -36,7 +37,7 @@ export const search = tool({
             return stdout.trim()
         } catch (e: any) {
             if (e?.code === "ENOENT") {
-                return "ast-grep (sg) not installed. Install with: cargo install ast-grep"
+                return "ast-grep not installed. Install with: cargo install ast-grep"
             }
             return `Error: ${e?.message ?? e}`
         }
@@ -46,12 +47,14 @@ export const search = tool({
 export const rewrite = tool({
     description:
         "Structural find-and-replace using AST patterns. Dry-run only — shows what would change without modifying files. " +
-        'Example: pattern="strncpy($D,$S,$N)" rewrite="memcpy($D,$S,strlen($S));$D[strlen($S)]=0;"',
+        'Example: pattern="strncpy($D,$S,$N)" rewrite="memcpy($D,$S,strlen($S));$D[strlen($S)]=0;" ' +
+        "Metavar names must be UPPERCASE (A-Z, underscore, digits). Patterns must be valid parseable code for the target language. " +
+        "Use $$$NAME for variadic matches (zero or more nodes).",
     args: {
         pattern: tool.schema.string().describe("AST pattern to find."),
-        replacement: tool.schema
+        rewrite: tool.schema
             .string()
-            .describe("Replacement pattern. Use same $VAR names from the search pattern."),
+            .describe("Rewrite pattern (matches CLI --rewrite flag). Use same $VAR names from the search pattern."),
         lang: tool.schema
             .string()
             .optional()
@@ -63,10 +66,10 @@ export const rewrite = tool({
     },
     async execute(args, context) {
         const searchPath = args.path ?? context.worktree
-        const cmdArgs = ["scan", "-p", args.pattern, "-r", args.replacement, searchPath, "--color", "never"]
+        const cmdArgs = ["run", "-p", args.pattern, "-r", args.rewrite, searchPath, "--color", "never"]
         if (args.lang) cmdArgs.splice(5, 0, "-l", args.lang)
         try {
-            const proc = Bun.spawn(["sg", ...cmdArgs], {
+            const proc = Bun.spawn(["ast-grep", ...cmdArgs], {
                 cwd: context.worktree,
                 stdout: "pipe",
                 stderr: "pipe",
@@ -79,7 +82,7 @@ export const rewrite = tool({
             return `DRY RUN — these changes would be applied:\n\n${stdout.trim()}`
         } catch (e: any) {
             if (e?.code === "ENOENT") {
-                return "ast-grep (sg) not installed. Install with: cargo install ast-grep"
+                return "ast-grep not installed. Install with: cargo install ast-grep"
             }
             return `Error: ${e?.message ?? e}`
         }

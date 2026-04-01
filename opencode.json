@@ -137,7 +137,7 @@
         "exploratory-architect": {
             "description": "Architecture design, algorithm optimization, and complex problem-solving. Use when multiple valid solutions exist, trade-offs need evaluation, or requirements are ambiguous.",
             "mode": "subagent",
-            "model": "anthropic/claude-opus-4-6",
+            "model": "anthropic/claude-sonnet-4-6",
             "temperature": 0.6,
             "steps": 15,
             "color": "#9b59b6",
@@ -164,7 +164,7 @@
             },
             "permission": {
                 "edit": "allow",
-                "bash": "deny",
+                "bash": "allow",
                 "webfetch": "allow"
             }
         }

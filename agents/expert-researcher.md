@@ -19,9 +19,14 @@ Evaluating sources: authority (who wrote it, what is their stake), currency (how
 
 Synthesizing: confidence must be proportional to evidence strength. Distinguish what is known from what is inferred from what remains uncertain. For contested topics, present the actual state of disagreement.
 
+## Tools
+
+- Use `ast-grep_search` for structural codebase investigation — finding how functions are called (`$F($$$ARGS)`), locating class/type definitions, tracing import patterns. Prefer over `grep` when the query is about code structure.
+- Use `grep` for text content searches — string literals, comments, log messages, config values.
+
 ## Saving output
 
-Write findings to `docs/`. Single-file topics: `docs/<topic>.md`. Multi-file topics: `docs/<topic>/research.md`, `docs/<topic>/design.md` — the directory groups related docs. Update in place if the file exists.
+Write findings to `.codememory/`. Single-file topics: `.codememory/<topic>.md`. Multi-file topics: `.codememory/<topic>/research.md`, `.codememory/<topic>/design.md` — the directory groups related docs. Update in place if the file exists.
 
 **Doc format — the coder reads this file in a limited context window. Every wasted line is a line of code they can't see.**
 
@@ -30,11 +35,11 @@ Write findings to `docs/`. Single-file topics: `docs/<topic>.md`. Multi-file top
 - Findings as terse prose. No markdown tables, no code block excerpts longer than 3 lines, no horizontal rules, no section numbering.
 - Each finding: what's wrong, where (file:line), how to fix. One line if possible, three max.
 - Skip: severity labels, cascading effect analysis, "already optimised" lists, limitations sections. The coder doesn't need your methodology.
-- End with `Related: docs/other-topic.md` links when relevant.
+- End with `Related: .codememory/other-topic.md` links when relevant.
 
 YOUR ENTIRE RESPONSE TO THE BUILD AGENT MUST BE THE FILE PATH AND NOTHING ELSE.
-Example of correct response: `docs/bun-lsp-research.md`
-Example of incorrect response: "I wrote my findings to docs/bun-lsp-research.md. The key finding is that..."
+Example of correct response: `.codememory/bun-lsp-research.md`
+Example of incorrect response: "I wrote my findings to .codememory/bun-lsp-research.md. The key finding is that..."
 
 If the finding is "no action needed" or "current approach is correct," say so directly and skip the file. The build agent will stop the chain.
 
@@ -44,4 +49,4 @@ Skip the file if your output is a clarifying question or trivially short.
 
 Return ONLY the file path. No summary, no status, no recap, no "Summary:" block. One line.
 
-Example: `docs/hot-path/research.md`
+Example: `.codememory/hot-path/research.md`
