@@ -33,7 +33,6 @@
             "extensions": [".sol"]
         }
     },
-    "plugin": ["opencode-claude-auth"],
     "provider": {
         "openrouter": {
             "models": {
@@ -95,8 +94,9 @@
     },
     "agent": {
         "build": {
-            "temperature": 0.35,
-            "prompt": "Orchestration agent. Classify requests and dispatch agent chains per AGENTS.md. Do not write code, research, or design.\n\nDo not read source files or docs/ files before dispatching. Classify from request text only.\n\nHANDOFFS: Subagents return only a file path (e.g. docs/topic.md). Pass that path to the next agent: \"Read docs/topic.md, then [task].\" Do not read the file yourself.\n\nSHORT-CIRCUIT: If a subagent returns \"no action needed\" or \"keep current approach\" instead of a file path, stop the chain. Do not dispatch coder with nothing to do.\n\nBATCHING: For multi-task workloads, group by shared file ownership, then subsystem, respect dependency order, verification last. Batch size 2-3. State batches and rationale before dispatching. Dispatch independent batches in parallel.",
+            "model": "openai/gpt-5.4",
+            "reasoningEffort": "none",
+            "prompt": "You are the build agent. Your full dispatch protocol is in AGENTS.md — follow it exactly.\n\nTwo modes:\n1. CONVERSATION: User is asking questions or refining requirements. Respond directly.\n2. DISPATCH: User gives an actionable task. Classify it using the decision tree in <classification_spec>, state the classification, then dispatch the chain.\n\nAfter each subagent returns, parse the response using the rules in <handoff_spec> and take the matching action.\n\nDo not write code, conduct research, design architectures, or review code. Do not read source files or .codememory/ contents. Classify from request text only.\n\nDo not expand the task beyond what the user asked. Do not narrate routine dispatches. Report outcomes only: what happened, what changed, what needs attention. Do not narrate your reasoning, emotional state, or interpretation of the user's tone. No \"Thinking:\" blocks, no \"I should...\" self-talk, no commentary on whether the user was rude or polite. Parse the request and act on it. When in CONVERSATION mode: produce the requested output and stop. NEVER append menus of alternative tones, formats, or rewrites. NEVER offer to redo the output differently. NEVER end with \"If you want, I can also...\" or \"Let me know if you'd like...\" — the user will ask if they want something else. Before dispatching any chain that includes `@expert-researcher` or `@exploratory-architect`, run `mkdir -p .codememory/`",
             "permission": {
                 "task": {
                     "*": "allow",
@@ -105,27 +105,23 @@
             }
         },
         "qa-reviewer": {
-            "description": "Post-implementation code review. Reads changed files against the original task spec and returns a structured verdict: PASS, NEEDS_FIX, or BLOCK. Never modifies files. Always run after deterministic-coder completes a task.",
+            "description": "Code review and QA. Reviews changed files against task spec or PR description. Returns VERDICT: PASS, NEEDS_FIX, or BLOCK. Uses gh CLI for PR context. Read-only — never modifies files.",
             "mode": "subagent",
-            "model": "anthropic/claude-opus-4-6",
-            "temperature": 0.2,
+            "model": "openai/gpt-5.4",
+            "reasoningEffort": "high",
             "steps": 20,
             "color": "#e67e22",
             "permission": {
                 "edit": "deny",
-                "bash": "deny",
+                "bash": "allow",
                 "webfetch": "deny"
-            },
-            "thinking": {
-                "type": "enabled",
-                "budgetTokens": 3000
             }
         },
         "deterministic-coder": {
-            "description": "Bug fixes, spec implementations, refactoring, and routine development. Use when the correct solution is well-defined and consistency matters more than exploration.",
+            "description": "Implementation agent. Bug fixes, spec implementations, refactoring. Returns structured CHANGES/VERIFICATION/STATUS output.",
             "mode": "subagent",
-            "model": "anthropic/claude-sonnet-4-6",
-            "temperature": 0.15,
+            "model": "openai/gpt-5.4",
+            "reasoningEffort": "medium",
             "steps": 30,
             "color": "#4a90d9",
             "permission": {
@@ -135,10 +131,10 @@
             }
         },
         "exploratory-architect": {
-            "description": "Architecture design, algorithm optimization, and complex problem-solving. Use when multiple valid solutions exist, trade-offs need evaluation, or requirements are ambiguous.",
+            "description": "Design agent. Architecture, trade-off analysis, feasibility assessment. Writes implementation specs to .codememory/ only.",
             "mode": "subagent",
-            "model": "anthropic/claude-sonnet-4-6",
-            "temperature": 0.6,
+            "model": "openai/gpt-5.4",
+            "reasoningEffort": "high",
             "steps": 15,
             "color": "#9b59b6",
             "thinking": {
@@ -146,16 +142,19 @@
                 "budgetTokens": 5000
             },
             "permission": {
-                "edit": "allow",
-                "bash": "deny",
+                "edit": {
+                    ".codememory/**": "allow",
+                    "*": "deny"
+                },
+                "bash": "allow",
                 "webfetch": "allow"
             }
         },
         "expert-researcher": {
-            "description": "Evidence gathering, source evaluation, and synthesis. Use when investigating unfamiliar topics, verifying claims, comparing solutions, or when confidence in an answer is below high.",
+            "description": "Research agent. Evidence gathering, source evaluation, codebase investigation. Writes findings to .codememory/ only.",
             "mode": "subagent",
-            "model": "anthropic/claude-sonnet-4-6",
-            "temperature": 0.35,
+            "model": "openai/gpt-5.4",
+            "reasoningEffort": "medium",
             "steps": 20,
             "color": "#27ae60",
             "thinking": {
@@ -163,17 +162,13 @@
                 "budgetTokens": 3000
             },
             "permission": {
-                "edit": "allow",
+                "edit": {
+                    ".codememory/**": "allow",
+                    "*": "deny"
+                },
                 "bash": "allow",
                 "webfetch": "allow"
             }
-        }
-    },
-    "command": {
-        "dispatch-todos": {
-            "description": "Group and dispatch all open todos to deterministic-coder in parallel batches",
-            "template": "Read the current todo list. Apply the grouping methodology: cluster by shared file ownership first, logical subsystem second, respect dependency order, put verification tasks last. State the proposed batches and rationale before dispatching. Then dispatch each independent batch in parallel using simultaneous task tool calls. Evaluate results after each wave before proceeding to the next.",
-            "agent": "build"
         }
     }
 }
